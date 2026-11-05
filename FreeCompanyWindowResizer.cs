@@ -53,7 +53,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     }
 
     public bool IsExpanded => configuration.Expanded;
-    public bool CanExpand => parentWindow is not null && replacedButton > 0;
+    public bool CanExpand => parentWindow is not null;
     private bool IsTransitioning => condition[ConditionFlag.BetweenAreas]
                                     || condition[ConditionFlag.BetweenAreas51]
                                     || condition[ConditionFlag.LoggingOut];
@@ -65,12 +65,20 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             if (IsTransitioning)
                 return false;
             var parent = gameGui.GetAddonByName<AtkUnitBase>(ParentAddonName);
-            return parent != null && parent->IsVisible && parent->RootNode != null;
+            var members = gameGui.GetAddonByName<AtkUnitBase>(AddonName);
+            return parent != null && (parent->IsVisible || (members != null && members->IsVisible));
         }
     }
 
     public void Update()
     {
+        if (toggleRequested)
+        {
+            toggleRequested = false;
+            configuration.Expanded = !configuration.Expanded;
+            saveConfiguration();
+        }
+
         if (IsTransitioning)
         {
             toggleRequested = false;
@@ -85,13 +93,6 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         }
 
         ReplaceCommunityFinder();
-        if (toggleRequested)
-        {
-            toggleRequested = false;
-            configuration.Expanded = !configuration.Expanded;
-            saveConfiguration();
-        }
-
         ApplyWindowHeight(parentWindow, IsExpanded ? extraHeight : 0);
 
         var currentAddon = gameGui.GetAddonByName<AtkUnitBase>(AddonName);
@@ -153,6 +154,17 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     }
 
     public (float X, float Y) GetButtonPosition() => buttonPosition;
+
+    public string GetDiagnosticState()
+    {
+        if (IsTransitioning)
+            return $"expanded={IsExpanded}, transitioning; native access suspended";
+        var parent = gameGui.GetAddonByName<AtkUnitBase>(ParentAddonName);
+        var members = gameGui.GetAddonByName<AtkUnitBase>(AddonName);
+        return $"expanded={IsExpanded}, parent={(nint)parent:X}, parentVisible={parent != null && parent->IsVisible}, " +
+               $"membersVisible={members != null && members->IsVisible}, canExpand={CanExpand}, " +
+               $"button={replacedButton:X}, position={buttonPosition}";
+    }
 
     public void Restore()
     {
@@ -283,12 +295,18 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         var parent = gameGui.GetAddonByName<AtkUnitBase>(ParentAddonName);
         if (parent == null || parentWindow is null || (nint)parent != parentWindow.Address)
             return;
+        short x = 0;
+        short y = 0;
+        parent->GetPosition(&x, &y);
+        var scale = parent->GetScale();
+        // Keep the control usable even when the native button is absent.
+        buttonPosition = (x + (parentWindow.Width - 100) * scale, y + 8 * scale);
         // freecompany.uld node 2 is the top-right Community Finder button.
         var button = parent->GetNodeById(2);
         if (button == null || (int)button->Type < 1000)
         {
             if (replacedButton != -1)
-                log.Error("FC Tweaks cannot replace Community Finder: native button node 2 is unavailable.");
+                log.Warning("FC Tweaks Community Finder node 2 is unavailable; using the parent top-right anchor.");
             replacedButton = -1;
             return;
         }
@@ -299,10 +317,6 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         }
         // Hidden nodes do not reliably refresh their screen transform. Node 2 is
         // a direct child of the FC root, so anchor to the live addon instead.
-        short x = 0;
-        short y = 0;
-        parent->GetPosition(&x, &y);
-        var scale = parent->GetScale();
         buttonPosition = (x + button->X * scale, y + button->Y * scale);
         button->ToggleVisibility(false);
     }

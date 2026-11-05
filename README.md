@@ -10,7 +10,13 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.7**.
+Current release: **0.1.8**.
+
+Version 0.1.8 adds **`/fctweaks`**, which toggles and saves global expansion even
+when the FC window is closed. It also writes visibility/anchor diagnostics to
+the Dalamud log. The overlay no longer requires a parent RootNode or successful
+Community Finder replacement; it can use the visible Members addon to recognize
+an open FC window and falls back to the parent top-right anchor if needed.
 
 Version 0.1.7 fixes the missing Expand/Collapse overlay: displaying the control
 does not require the parent addon's optional WindowNode pointer. Its position is
