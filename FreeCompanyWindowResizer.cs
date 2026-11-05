@@ -140,14 +140,8 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         if (list == null || !list->IsVerticalScroll || list->VisibleRowCount <= 0 || list->ItemHeight <= 0)
             return;
 
-        ushort windowWidth = 0;
-        ushort windowHeight = 0;
-        addon->GetSize(&windowWidth, &windowHeight, false);
-
         memberList = list;
         originalLayout = new Layout(
-            windowWidth,
-            windowHeight,
             list->ListWidth,
             list->ListHeight,
             list->VisibleRowCount);
@@ -169,18 +163,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         var rowStep = memberList->RowStepY > 0 ? memberList->RowStepY : memberList->ItemHeight;
         var expandedListHeight = ToUShort(original.ListHeight + (expandedRowCount - original.RowCount) * rowStep);
         var expandedListWidth = ToUShort(original.ListWidth);
-        var expandedWindowWidth = original.WindowWidth;
         var extraHeight = expandedListHeight - original.ListHeight;
-        var expandedWindowHeight = ToUShort(original.WindowHeight + extraHeight);
-
-        ushort currentWindowWidth = 0;
-        ushort currentWindowHeight = 0;
-        addon->GetSize(&currentWindowWidth, &currentWindowHeight, false);
-        if (currentWindowWidth != expandedWindowWidth || currentWindowHeight != expandedWindowHeight)
-            addon->SetSize(expandedWindowWidth, expandedWindowHeight);
-
-        ApplyWindowHeight(memberWindow, extraHeight);
-        ApplyWindowHeight(parentWindow, extraHeight);
 
         if (memberList->VisibleRowCount != expandedRowCount
             || memberList->ListWidth != expandedListWidth
@@ -189,18 +172,15 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             memberList->SetVisibleRowCount(expandedRowCount);
             memberList->SetSize(expandedListWidth, expandedListHeight);
         }
+
+        ApplyWindowHeight(memberWindow, extraHeight);
+        ApplyWindowHeight(parentWindow, extraHeight);
     }
 
     private void RestoreLayout()
     {
         if (addon == null || memberList == null || originalLayout is not { } original)
             return;
-
-        ushort currentWindowWidth = 0;
-        ushort currentWindowHeight = 0;
-        addon->GetSize(&currentWindowWidth, &currentWindowHeight, false);
-        if (currentWindowWidth != original.WindowWidth || currentWindowHeight != original.WindowHeight)
-            addon->SetSize(original.WindowWidth, original.WindowHeight);
 
         if (memberList->VisibleRowCount != original.RowCount
             || memberList->ListWidth != original.ListWidth
@@ -241,23 +221,24 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         ushort currentHeight = 0;
         window->GetSize(&currentWidth, &currentHeight, false);
         var changed = currentWidth != layout.Width || currentHeight != height;
-        if (changed)
-            window->SetSize(layout.Width, height);
-
-        // SetSize alone does not resize the visible native window frame.
+        // The frame must be sized before SetSize updates the addon's native layout.
         if (window->WindowNode != null && layout.FrameHeight is { } frameHeight)
         {
             var targetFrameHeight = ToUShort(frameHeight + extraHeight);
             if (window->WindowNode->Height != targetFrameHeight)
             {
                 window->WindowNode->SetHeight(targetFrameHeight);
-                window->WindowNode->Component->UldManager.UpdateDrawNodeList();
                 changed = true;
             }
         }
 
         if (changed)
+        {
+            window->SetSize(layout.Width, height);
+            if (window->WindowNode != null && window->WindowNode->Component != null)
+                window->WindowNode->Component->UldManager.UpdateDrawNodeList();
             window->UpdateCollisionNodeList(false);
+        }
     }
 
     private static ushort ToUShort(int value) => (ushort)Math.Clamp(value, 1, ushort.MaxValue);
@@ -265,8 +246,6 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private sealed record WindowLayout(string Name, nint Address, ushort Width, ushort Height, ushort? FrameHeight);
 
     private sealed record Layout(
-        ushort WindowWidth,
-        ushort WindowHeight,
         short ListWidth,
         short ListHeight,
         short RowCount);

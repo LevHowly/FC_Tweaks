@@ -10,8 +10,9 @@ either window closes or is destroyed, and when the plugin is unloaded.
 The toggle appears in the upper-right of the member window.
 
 The native frame has its own layout node: changing the list or addon dimensions
-alone does not stretch it. FC Tweaks updates that frame's height and refreshes
-its draw/collision layout as well. Visual layout still needs in-game validation.
+alone does not stretch it. FC Tweaks sets the frame height before updating the
+addon dimensions, then refreshes its draw/collision layout. Expansion and
+restoration use the same resize order. Visual layout still needs in-game validation.
 
 ## Build
 
