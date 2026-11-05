@@ -10,7 +10,15 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.1**.
+Current release: **0.1.2**.
+
+Version 0.1.2 suspends UI writes during area transitions and logout. Close
+callbacks queue restoration instead of resizing rows during teardown; finalization
+only discards cached pointers. If the same window survives a transition, it is
+restored on a subsequent safe framework update after it becomes visible again.
+If it is destroyed, the plugin captures the newly created window instead.
+This hardens FC window lifecycle handling; it does not fix or diagnose Penumbra
+resource-loading failures. In-game transition testing is still required.
 
 Version 0.1.1 fixes a native crash when expanding from the ImGui button.
 The button now queues the resize for the framework update instead of allocating
@@ -21,8 +29,9 @@ FC Tweaks adds an **Expand** toggle to the Free Company member window. It
 doubles the member list's visible row count (up to the number of members).
 The member window and the vanilla Free Company background frame grow by the
 same added list height, leaving all widths unchanged. Click **Collapse** to
-restore the original size. The original dimensions are also restored before
-either window closes or is destroyed, and when the plugin is unloaded.
+restore the original size. Closing queues restoration for the next safe update
+if the window survives. Destroyed windows are not accessed again. Unloading
+restores live windows unless an area transition or logout is in progress.
 
 The toggle appears in the upper-right of the member window.
 

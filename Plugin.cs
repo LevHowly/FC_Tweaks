@@ -12,11 +12,11 @@ public sealed class Plugin : IDalamudPlugin
     private readonly FreeCompanyWindowResizer resizer;
 
     public Plugin(IDalamudPluginInterface pluginInterface, IGameGui gameGui, IFramework framework,
-        IAddonLifecycle addonLifecycle, IPluginLog log)
+        IAddonLifecycle addonLifecycle, IPluginLog log, ICondition condition)
     {
         this.pluginInterface = pluginInterface;
         this.framework = framework;
-        resizer = new FreeCompanyWindowResizer(gameGui, addonLifecycle, log);
+        resizer = new FreeCompanyWindowResizer(gameGui, addonLifecycle, log, condition);
 
         framework.Update += OnFrameworkUpdate;
         pluginInterface.UiBuilder.Draw += Draw;

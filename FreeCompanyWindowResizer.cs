@@ -1,5 +1,6 @@
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
@@ -15,6 +16,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private readonly IGameGui gameGui;
     private readonly IAddonLifecycle addonLifecycle;
     private readonly IPluginLog log;
+    private readonly ICondition condition;
     private AtkUnitBase* addon;
     private AtkComponentList* memberList;
     private Layout? originalLayout;
@@ -23,35 +25,47 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private WindowLayout? memberWindow;
     private WindowLayout? parentWindow;
     private bool toggleRequested;
+    private bool restorePending;
 
-    public FreeCompanyWindowResizer(IGameGui gameGui, IAddonLifecycle addonLifecycle, IPluginLog log)
+    public FreeCompanyWindowResizer(IGameGui gameGui, IAddonLifecycle addonLifecycle, IPluginLog log,
+        ICondition condition)
     {
         this.gameGui = gameGui;
         this.addonLifecycle = addonLifecycle;
         this.log = log;
+        this.condition = condition;
         foreach (var name in new[] { AddonName, ParentAddonName })
         {
             addonLifecycle.RegisterListener(AddonEvent.PreClose, name, OnClosing);
-            addonLifecycle.RegisterListener(AddonEvent.PreFinalize, name, OnClosing);
+            addonLifecycle.RegisterListener(AddonEvent.PreFinalize, name, OnFinalizing);
             addonLifecycle.RegisterListener(AddonEvent.PostUpdate, name, OnUpdated);
         }
     }
 
     public bool IsExpanded => isExpanded;
     public bool CanExpand => memberList != null && originalLayout is not null;
-    public bool IsFreeCompanyVisible => addon != null && addon->IsVisible;
+    private bool IsTransitioning => condition[ConditionFlag.BetweenAreas]
+                                    || condition[ConditionFlag.BetweenAreas51]
+                                    || condition[ConditionFlag.LoggingOut];
+
+    public bool IsFreeCompanyVisible => !IsTransitioning && addon != null
+        && gameGui.GetAddonByName<AtkUnitBase>(AddonName) == addon
+        && addon->IsReady && addon->IsVisible;
 
     public void Update()
     {
+        if (IsTransitioning)
+        {
+            QueueRestore();
+            return;
+        }
+
         var currentAddon = gameGui.GetAddonByName<AtkUnitBase>(AddonName);
         if (currentAddon != addon)
         {
-            Restore();
+            // The previous addon may already be freed. Never restore through it.
+            ForgetLayout();
             addon = currentAddon;
-            memberList = null;
-            originalLayout = null;
-            isExpanded = false;
-            framesUntilNextSearch = 0;
         }
 
         if (addon == null || !addon->IsReady)
@@ -62,26 +76,21 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 
         if (!addon->IsVisible)
         {
-            toggleRequested = false;
-            if (isExpanded)
-            {
-                RestoreLayout();
-                isExpanded = false;
-            }
-
+            QueueRestore();
             return;
         }
 
         if (memberList != null && addon->GetComponentListById(MemberListNodeId) != memberList)
         {
             log.Warning("FC Tweaks roster component changed; cancelling expansion and recapturing its layout.");
-            ApplyWindowHeight(memberWindow, 0);
-            ApplyWindowHeight(parentWindow, 0);
-            memberList = null;
-            originalLayout = null;
-            isExpanded = false;
-            toggleRequested = false;
-            framesUntilNextSearch = 0;
+            ForgetLayout();
+            addon = currentAddon;
+        }
+
+        if (restorePending)
+        {
+            restorePending = false;
+            Restore();
         }
 
         if (memberList == null && framesUntilNextSearch == 0)
@@ -129,6 +138,12 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     public void Restore()
     {
         toggleRequested = false;
+        if (IsTransitioning)
+        {
+            QueueRestore();
+            return;
+        }
+
         if (addon != null && gameGui.GetAddonByName<AtkUnitBase>(AddonName) == addon
             && addon->IsReady && memberList != null && originalLayout is not null
             && addon->GetComponentListById(MemberListNodeId) == memberList)
@@ -145,7 +160,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         foreach (var name in new[] { AddonName, ParentAddonName })
         {
             addonLifecycle.UnregisterListener(AddonEvent.PreClose, name, OnClosing);
-            addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, name, OnClosing);
+            addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, name, OnFinalizing);
             addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, name, OnUpdated);
         }
     }
@@ -153,7 +168,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private void OnUpdated(AddonEvent type, AddonArgs args)
     {
         // Reapply animated decorations after native updates, without allocating list rows.
-        if (!isExpanded || originalLayout is not { } original
+        if (IsTransitioning || restorePending || !isExpanded || originalLayout is not { } original
             || addon == null || gameGui.GetAddonByName<AtkUnitBase>(AddonName) != addon
             || !addon->IsReady || !addon->IsVisible
             || addon->GetComponentListById(MemberListNodeId) != memberList)
@@ -169,12 +184,34 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 
     private void OnClosing(AddonEvent type, AddonArgs args)
     {
-        Restore();
+        // Closing may run inside zone teardown; do not invoke any native resizing here.
+        QueueRestore();
+    }
+
+    private void OnFinalizing(AddonEvent type, AddonArgs args)
+    {
+        // Finalization destroys nodes. Only discard managed bookkeeping.
+        ForgetLayout();
+    }
+
+    private void QueueRestore()
+    {
+        restorePending |= isExpanded;
+        isExpanded = false;
+        toggleRequested = false;
+    }
+
+    private void ForgetLayout()
+    {
+        addon = null;
         memberList = null;
         originalLayout = null;
         memberWindow = null;
         parentWindow = null;
         framesUntilNextSearch = 0;
+        isExpanded = false;
+        toggleRequested = false;
+        restorePending = false;
     }
 
     private void CaptureLayout()
@@ -281,7 +318,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             return;
 
         var window = gameGui.GetAddonByName<AtkUnitBase>(layout.Name);
-        if (window == null || (nint)window != layout.Address || !window->IsReady)
+        if (IsTransitioning || window == null || (nint)window != layout.Address || !window->IsReady)
             return;
 
         var height = ToUShort(layout.Height + extraHeight);
