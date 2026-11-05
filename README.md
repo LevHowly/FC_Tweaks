@@ -10,67 +10,40 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.8**.
+Current release: **0.1.9**.
 
-Version 0.1.8 adds **`/fctweaks`**, which toggles and saves global expansion even
-when the FC window is closed. It also writes visibility/anchor diagnostics to
-the Dalamud log. The overlay no longer requires a parent RootNode or successful
-Community Finder replacement; it can use the visible Members addon to recognize
-an open FC window and falls back to the parent top-right anchor if needed.
+## Expand / Collapse
 
-Version 0.1.7 fixes the missing Expand/Collapse overlay: displaying the control
-does not require the parent addon's optional WindowNode pointer. Its position is
-calculated from the parent window's live position/scale and Community Finder's
-local coordinates, rather than a hidden node's stale screen transform.
+An **Expand / Collapse** button replaces Community Finder at the top right of
+the Free Company window (the native button is hidden while the plugin runs and
+restored when it unloads).
 
-Version 0.1.6 makes expansion a saved, global FC-window preference. Switching
-tabs or closing the window no longer collapses it or resets the button. The
-Expand/Collapse control replaces Community Finder at the top-right of the parent
-FC window on every tab. The native Community Finder button is hidden while the
-plugin is active and restored on safe unload; the replacement is a Dalamud button.
-Other tabs keep their existing content layouts for now, inside the taller frame.
-The Members list uses native SetSize/recalculation rather than separately forcing
-the visible-row count, and waits for incremental member loading to settle before
-resizing. Native teardown never resizes rows.
+- **Expand** makes the whole FC window taller on every tab and gives the Members
+  list that many extra rows. Widths never change. The left divider stretches and
+  the Members page selector/footer move down with it.
+- The choice is **saved**: switching tabs, closing the window, zoning, and
+  reloading the plugin keep it.
+- `/fctweaks` toggles the same setting (even with the window closed).
+  `/fctweaks status` prints what the plugin sees, which helps with bug reports.
 
-Version 0.1.5 restores v0.1.0's frame capture/sizing behavior, including sizing
-the parent frame without requiring its own OnSetup flag. Pre-draw corrections
-use the intended expanded height, not a list height that native updates may reset.
-Row allocation remains on framework updates, with transition/identity guards.
-Sorting waits for a full second without roster updates and is forgotten on close.
+Other tabs keep their original content layout inside the taller frame.
 
-Version 0.1.4 reapplies native frame/divider/footer geometry immediately before
-drawing, so late native layout updates cannot leave the background at its old
-height. Native row allocation stays exclusively on framework updates. Background
-windows that are not ready when the roster first opens are captured later.
-The selected sort now survives roster refreshes and loading screens, pausing
-native access during zoning and resuming only after the roster is ready.
+How it works, briefly:
 
-Version 0.1.3 adds online-only sorting buttons beside Name, Location, and Rank.
-Sorting is limited to the currently loaded roster page and leaves offline rows
-untouched. See [Online member sorting](#online-member-sorting) below.
+- The saved preference is the only state. Each framework update reconciles the
+  native windows towards it; clicking never touches native memory directly.
+- The outer `FreeCompany` window is captured once it is visible with its nodes
+  loaded. Its `IsReady` flag is not used: it does not reliably report true for
+  this window, which previously stopped the background frame from growing.
+- The Members list is resized only from the framework update, only after the
+  roster has stopped changing for one second, and only with the game's own
+  `SetSize` (which recalculates visible rows). Its row count is never forced.
+- Addons that are set up again or destroyed are forgotten, never restored
+  through. Nothing native is touched while zoning or logging out.
 
-Version 0.1.2 suspends UI writes during area transitions and logout. Close
-callbacks queue restoration instead of resizing rows during teardown; finalization
-only discards cached pointers. If the same window survives a transition, it is
-restored on a subsequent safe framework update after it becomes visible again.
-If it is destroyed, the plugin captures the newly created window instead.
-This hardens FC window lifecycle handling; it does not fix or diagnose Penumbra
-resource-loading failures. In-game transition testing is still required.
-
-Version 0.1.1 fixes a native crash when expanding from the ImGui button.
-The button now queues the resize for the framework update instead of allocating
-native list rows during rendering. Addon readiness and component identity are
-checked before resizing; decoration updates never allocate list rows.
-
-FC Tweaks replaces Community Finder with an **Expand / Collapse** toggle in the
-upper-right of the Free Company window. It doubles the Members list's vertical
-space, leaving widths unchanged. The parent FC frame stays taller on all tabs,
-even while the Members addon is hidden or recreated. Expansion is saved in
-Dalamud configuration on each click and restored when reopening the FC window
-or reloading the plugin. Closing does not change this preference. Destroyed
-windows are never accessed again. Safe unload restores live native geometry and
-the original Community Finder button without changing the saved preference.
+Verified native layout nodes: FreeCompany node 2 (Community Finder) and node 19
+(the rotated left divider); FreeCompanyMember node 24 (member list) and groups
+45 and 49 (page selectors and footer separator).
 
 ## Online member sorting
 
@@ -83,42 +56,33 @@ Three small **Sort** buttons sit immediately to the right of the native **Name**
   by the game. The Goblet is identified using its localized game-data name.
 - **Rank:** numerical FC hierarchy order, highest first, not alphabetical rank names.
 
-Offline rows remain in their exact slots and retain their relative order.
-Online members visiting other worlds are included, even when their location shows
-a world name or elapsed-time text. Equal sort keys retain their previous order.
-The selected sort is remembered only while the window remains open. It is reapplied
-to the current loaded page after native roster refreshes or page changes, but only
-after a full second without roster updates. Every native roster update and change
-in loaded member count restarts this delay, so members arriving one by one are not
-repeatedly shuffled during loading. Checks run at most four times per second once
-the delay has elapsed; an already sorted roster causes no native row swaps or UI
-update requests. Sorting also waits for pending native data updates to finish and
-pauses while a context menu is open or a list row is held. Closing, hiding, or
-destroying the window clears the selected sort; reopening requires another click.
+Offline rows stay in their exact slots. Online members visiting other worlds are
+included. Equal sort keys keep their previous order.
 
-Sorting runs on the framework update, never in the rendering callback. It uses
-the native FC row-swap handler to keep names, status, rank, memo indexes, and
-right-click member identity together. Pending button requests and UI pointers are discarded on close,
-destruction, zoning, or logout. The selected sort survives zoning only if the
-window remains open, and is cleared on close, hide, destruction, or logout.
-Unsupported native functions or array layouts disable sorting and report an error in the
-Dalamud log; expansion remains independent. Native interaction and layout still
-require in-game testing.
+The selected sort is reapplied after roster refreshes, but only once the roster
+has gone a full second without updates, so members arriving one by one during
+loading are not shuffled repeatedly. It also waits for pending native updates,
+open context menus, and held rows. Closing or hiding the window forgets the
+sort; zoning keeps it if the window stays open.
 
-The native frame has its own layout node: changing the list or addon dimensions
-alone does not stretch it. FC Tweaks sets the frame height before updating the
-addon dimensions, then refreshes its draw/collision layout. Expansion and
-restoration use the same resize order. Visual layout still needs in-game validation.
+Sorting uses the game's own FC row-swap handler, so names, status, rank, memos,
+and right-click member identity stay together. If the native functions or data
+layout do not match this game version, sorting disables itself and logs an
+error; Expand / Collapse keeps working.
 
-The left divider stretches by the same height delta, and the bottom pagination
-controls and horizontal separator move down with the roster. Their original
-dimensions and positions are restored on collapse. The plugin targets the
-verified native layout nodes: FreeCompany node 19 (a rotated divider strip),
-and FreeCompanyMember groups 45 and 49 (page selectors and the footer, including
-its horizontal separator). The divider's local width and bottom position grow
-together so its top stays fixed. Decorations are reapplied after native updates
-to prevent UI animations from resetting them. Missing or incompatible nodes are
-reported in the Dalamud log.
+## Changelog
+
+- **0.1.9** Fix the vanilla FC frame not growing (its baseline could be captured
+  before the window was set up). Refactor: clicking only changes the saved
+  setting; the Members frame follows the list's real height; `/fctweaks status`.
+- **0.1.8** `/fctweaks` command.
+- **0.1.6–0.1.7** Saved, global expansion; button replaces Community Finder;
+  fixed a crash when expanding after switching tabs (row count is no longer forced).
+- **0.1.5** One-second sorting debounce; sort forgotten on close.
+- **0.1.3–0.1.4** Online member sorting.
+- **0.1.1–0.1.2** Crash fixes: no native list changes from rendering, during
+  zoning, or from close/finalize callbacks.
+- **0.1.0** First release.
 
 ## Build
 
