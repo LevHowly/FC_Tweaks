@@ -16,15 +16,18 @@ namespace FC_Tweaks;
 /// </para>
 /// <para>
 /// Safety rules learned from crashes: the member list is only resized from the framework update,
-/// never from draw callbacks or close/finalize, and never while the roster is still loading.
+/// never from draw callbacks or close/finalize, and not while it has a native update pending.
 /// Its row count is never set directly; <c>SetSize</c> lets the game recalculate visible rows.
+/// </para>
+/// <para>
+/// The list's real size is its owner node's size. Native <c>SetSize</c> resizes only that node and
+/// never updates <c>ListWidth</c>/<c>ListHeight</c>, so those fields must not be used to measure it.
 /// </para>
 /// </summary>
 internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 {
     /// <summary>Used until the Members list has been seen and its row height measured.</summary>
     private const int DefaultExtraHeight = 252;
-    private const long ListSettleMilliseconds = 1000;
     private static readonly Vector2 FallbackButtonOffset = new(-100, 8);
     private static readonly Vector2 FallbackButtonSize = new(64, 28);
 
@@ -52,8 +55,6 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private AddonFrame? windowFrame;
     private AddonFrame? membersFrame;
     private ListBaseline? listBaseline;
-    private int settlingListLength = -1;
-    private long settlingSince;
     private HiddenButton? hiddenButton;
     private bool reportedMissingButton;
     private (Vector2 Position, Vector2 Size)? expandButton;
@@ -161,7 +162,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         var members = GetAddon(MembersAddon);
         var list = members != null && members->IsReady ? TryGetList(members) : null;
         if (list != null)
-            ResizeList(list, listBaseline!.Width, listBaseline.Height);
+            ResizeList(list, listBaseline!.Height);
         membersFrame?.Apply(members, 0);
 
         var window = GetAddon(WindowAddon);
@@ -190,49 +191,39 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 
         if (listBaseline is null)
         {
-            if (!list->IsVerticalScroll || list->VisibleRowCount <= 0 || list->ItemHeight <= 0)
+            var owner = list->OwnerNode;
+            if (owner == null || owner->Width == 0 || owner->Height == 0
+                || !list->IsVerticalScroll || list->VisibleRowCount <= 0 || list->ItemHeight <= 0)
                 return;
             membersFrame = AddonFrame.TryCapture(members, MembersSpec, log);
             if (membersFrame is null)
                 return;
             var rowStep = list->RowStepY > 0 ? list->RowStepY : list->ItemHeight;
-            listBaseline = new ListBaseline((nint)list, list->ListWidth, list->ListHeight,
+            listBaseline = new ListBaseline((nint)list, owner->Width, owner->Height,
                 list->VisibleRowCount * rowStep);
         }
 
-        if (IsListSettled(list))
-        {
-            var height = listBaseline.Height + (IsExpanded ? listBaseline.ExtraHeight : 0);
-            ResizeList(list, listBaseline.Width, height);
-        }
+        if (!list->IsUpdatePending)
+            ResizeList(list, listBaseline.Height + (IsExpanded ? listBaseline.ExtraHeight : 0));
 
         membersFrame?.Apply(members, MembersExtraHeight(members));
     }
 
-    /// <summary>Members arrive one by one while loading; only resize after a second without changes.</summary>
-    private bool IsListSettled(AtkComponentList* list)
+    /// <summary>Resizes the list's owner node; the game then recalculates its visible rows.</summary>
+    private void ResizeList(AtkComponentList* list, int height)
     {
-        var now = Environment.TickCount64;
-        if (list->ListLength != settlingListLength)
-        {
-            settlingListLength = list->ListLength;
-            settlingSince = now;
-        }
-
-        return now - settlingSince >= ListSettleMilliseconds && !list->IsUpdatePending;
-    }
-
-    private static void ResizeList(AtkComponentList* list, int width, int height)
-    {
-        if (list->ListWidth != width || list->ListHeight != height)
-            list->SetSize((ushort)width, (ushort)height);
+        var owner = list->OwnerNode;
+        if (owner != null && (owner->Width != listBaseline!.Width || owner->Height != height))
+            list->SetSize((ushort)listBaseline.Width, (ushort)height);
     }
 
     /// <summary>The Members frame follows the list's actual height, so they never disagree.</summary>
     private int MembersExtraHeight(AtkUnitBase* members)
     {
         var list = TryGetList(members);
-        return list == null ? 0 : Math.Max(0, list->ListHeight - listBaseline!.Height);
+        return list == null || list->OwnerNode == null
+            ? 0
+            : Math.Max(0, list->OwnerNode->Height - listBaseline!.Height);
     }
 
     private AtkComponentList* TryGetList(AtkUnitBase* members)
@@ -316,7 +307,6 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     {
         membersFrame = null;
         listBaseline = null;
-        settlingListLength = -1;
     }
 
     private AtkUnitBase* GetAddon(string name) => (AtkUnitBase*)gameGui.GetAddonByName(name).Address;

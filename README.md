@@ -10,7 +10,7 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.9**.
+Current release: **0.1.10**.
 
 ## Expand / Collapse
 
@@ -35,9 +35,10 @@ How it works, briefly:
 - The outer `FreeCompany` window is captured once it is visible with its nodes
   loaded. Its `IsReady` flag is not used: it does not reliably report true for
   this window, which previously stopped the background frame from growing.
-- The Members list is resized only from the framework update, only after the
-  roster has stopped changing for one second, and only with the game's own
-  `SetSize` (which recalculates visible rows). Its row count is never forced.
+- The Members list is resized as soon as it appears, only from the framework
+  update, and only with the game's own `SetSize` (which recalculates visible
+  rows). Its row count is never forced. Its size is measured from its owner
+  node, because `SetSize` does not update the list's `ListHeight` field.
 - Addons that are set up again or destroyed are forgotten, never restored
   through. Nothing native is touched while zoning or logging out.
 
@@ -72,6 +73,10 @@ error; Expand / Collapse keeps working.
 
 ## Changelog
 
+- **0.1.10** Move the page selector/footer down with the list (the list's growth
+  was measured from a field the game never updates, so it always read 0). Grow
+  the list immediately instead of after members finish loading. Collapse now
+  shrinks the list back reliably.
 - **0.1.9** Fix the vanilla FC frame not growing (its baseline could be captured
   before the window was set up). Refactor: clicking only changes the saved
   setting; the Members frame follows the list's real height; `/fctweaks status`.
