@@ -10,7 +10,12 @@ internal enum RosterSortMode
 internal readonly record struct RosterMember(
     ulong ContentId, ulong State, string Name, string Location, bool IsGoblet, int RankOrder)
 {
-    public bool IsOnline => (State & 0x810000000000UL) != 0;
+    /// <summary>Online (bit 47) or online on another world (bit 40).</summary>
+    public const ulong OnlineStateMask = 0x810000000000UL;
+
+    public bool IsOnline => IsOnlineState(State);
+
+    public static bool IsOnlineState(ulong state) => (state & OnlineStateMask) != 0;
 }
 
 internal sealed class RosterSortSession

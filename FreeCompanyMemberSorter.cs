@@ -9,12 +9,12 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
+using static FC_Tweaks.FreeCompanyUi;
 
 namespace FC_Tweaks;
 
 internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
 {
-    private const string AddonName = "FreeCompanyMember";
     private const string SwapSignature =
         "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 41 57 48 83 EC 30 48 8B 42 28 4C 8B EA";
     private const string RankSignature =
@@ -29,9 +29,9 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
     private readonly string gobletName;
     private readonly HeaderButton[] buttons =
     [
-        new(12, RosterSortMode.Name, "Name: A to Z (online members only)"),
-        new(14, RosterSortMode.Location, "Location: The Goblet first, then A to Z (online members only)"),
-        new(15, RosterSortMode.Rank, "Rank: highest to lowest (online members only)"),
+        new(NameHeaderNodeId, RosterSortMode.Name, "Name: A to Z (online members only)"),
+        new(LocationHeaderNodeId, RosterSortMode.Location, "Location: The Goblet first, then A to Z (online members only)"),
+        new(RankHeaderNodeId, RosterSortMode.Rank, "Rank: highest to lowest (online members only)"),
     ];
     private SortRequest? pending;
     private nint visibleAddon;
@@ -68,16 +68,16 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         if (string.IsNullOrWhiteSpace(gobletName))
             Disable("The localized name of The Goblet could not be loaded.");
 
-        lifecycle.RegisterListener(AddonEvent.PreClose, AddonName, OnClosing);
-        lifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnClosing);
-        lifecycle.RegisterListener(AddonEvent.PostRequestedUpdate, AddonName, OnRosterUpdated);
+        lifecycle.RegisterListener(AddonEvent.PreClose, MembersAddon, OnClosing);
+        lifecycle.RegisterListener(AddonEvent.PreFinalize, MembersAddon, OnClosing);
+        lifecycle.RegisterListener(AddonEvent.PostRequestedUpdate, MembersAddon, OnRosterUpdated);
     }
 
     public void Dispose()
     {
-        lifecycle.UnregisterListener(AddonEvent.PreClose, AddonName, OnClosing);
-        lifecycle.UnregisterListener(AddonEvent.PreFinalize, AddonName, OnClosing);
-        lifecycle.UnregisterListener(AddonEvent.PostRequestedUpdate, AddonName, OnRosterUpdated);
+        lifecycle.UnregisterListener(AddonEvent.PreClose, MembersAddon, OnClosing);
+        lifecycle.UnregisterListener(AddonEvent.PreFinalize, MembersAddon, OnClosing);
+        lifecycle.UnregisterListener(AddonEvent.PostRequestedUpdate, MembersAddon, OnRosterUpdated);
         sortSession.Close();
         Clear();
     }
@@ -91,13 +91,14 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
             return;
         }
 
-        if (condition[ConditionFlag.BetweenAreas] || condition[ConditionFlag.BetweenAreas51])
+        // Zoning keeps the chosen sort if the window stays open; logging out (above) forgets it.
+        if (IsTransitioning(condition))
         {
             Clear();
             return;
         }
 
-        var addon = gameGui.GetAddonByName<AtkUnitBase>(AddonName);
+        var addon = gameGui.GetAddonByName<AtkUnitBase>(MembersAddon);
         var agent = AgentFreeCompany.Instance();
         if (addon == null || !addon->IsReady || !addon->IsVisible || agent == null)
         {
@@ -131,7 +132,7 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         {
             nextSortCheck = Environment.TickCount64 + 250;
             var contextMenu = gameGui.GetAddonByName<AtkUnitBase>("ContextMenu");
-            var list = addon->GetComponentListById(24);
+            var list = addon->GetComponentListById(MemberListNodeId);
             if ((contextMenu == null || !contextMenu->IsVisible)
                 && list != null && list->HeldItemIndex < 0)
                 Sort(addon, agent, mode);
@@ -191,7 +192,7 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         var proxy = agent->InfoProxyFreeCompanyMember;
         var company = agent->InfoProxyFreeCompany;
         var stage = AtkStage.Instance();
-        var list = addon->GetComponentListById(24);
+        var list = addon->GetComponentListById(MemberListNodeId);
         if (proxy == null || company == null || stage == null || list == null
             || proxy->CharData == null || proxy->EntryCount == 0 || proxy->EntryCount > 200
             || proxy->EntryCount != list->ListLength)
@@ -242,7 +243,7 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
 
             var location = SeString.Parse(locationPointer).TextValue;
             var rankOrder = 0;
-            if (mode == RosterSortMode.Rank && ((ulong)entry.State & 0x810000000000UL) != 0)
+            if (mode == RosterSortMode.Rank && RosterMember.IsOnlineState((ulong)entry.State))
             {
                 var rankId = (byte)((entry.ExtraFlags >> 12) & 0xFF);
                 var rank = getRank(company, rankId);
@@ -293,7 +294,7 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
     private void ObserveRoster(AtkUnitBase* addon, AgentFreeCompany* agent)
     {
         var proxy = agent->InfoProxyFreeCompanyMember;
-        var list = addon->GetComponentListById(24);
+        var list = addon->GetComponentListById(MemberListNodeId);
         var data = proxy == null ? 0 : (nint)proxy->CharData;
         var count = proxy == null ? 0 : proxy->EntryCount;
         var length = list == null ? 0 : list->ListLength;

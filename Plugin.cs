@@ -1,20 +1,21 @@
-using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
-using System.Numerics;
 
 namespace FC_Tweaks;
 
 public sealed class Plugin : IDalamudPlugin
 {
+    private const string CommandName = "/fctweaks";
+
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly IFramework framework;
-    private readonly FreeCompanyWindowResizer resizer;
-    private readonly FreeCompanyMemberSorter sorter;
     private readonly ICommandManager commands;
     private readonly IChatGui chat;
     private readonly IPluginLog log;
+    private readonly FreeCompanyWindowResizer resizer;
+    private readonly FreeCompanyMemberSorter sorter;
+    private readonly bool ownsCommand;
 
     public Plugin(IDalamudPluginInterface pluginInterface, IGameGui gameGui, IFramework framework,
         IAddonLifecycle addonLifecycle, IPluginLog log, ICondition condition, ISigScanner scanner,
@@ -25,72 +26,58 @@ public sealed class Plugin : IDalamudPlugin
         this.commands = commands;
         this.chat = chat;
         this.log = log;
+
         var configuration = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
-        resizer = new FreeCompanyWindowResizer(gameGui, addonLifecycle, log, condition, configuration,
+        resizer = new FreeCompanyWindowResizer(gameGui, addonLifecycle, condition, log, configuration,
             () => pluginInterface.SavePluginConfig(configuration));
         sorter = new FreeCompanyMemberSorter(gameGui, condition, addonLifecycle, log, scanner, dataManager);
 
-        if (!commands.AddHandler("/fctweaks", new CommandInfo(OnCommand)
-            { HelpMessage = "Toggle global FC window expansion (also saves the choice while closed)." }))
-            log.Error("FC Tweaks could not register /fctweaks: the command is already registered.");
+        ownsCommand = commands.AddHandler(CommandName, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Expand or collapse the Free Company window. \"/fctweaks status\" prints diagnostics.",
+        });
+        if (!ownsCommand)
+            log.Error("FC Tweaks could not register {Command}: it is already registered.", CommandName);
+
         framework.Update += OnFrameworkUpdate;
-        pluginInterface.UiBuilder.Draw += Draw;
+        pluginInterface.UiBuilder.Draw += OnDraw;
     }
 
     public string Name => "FC Tweaks";
 
     public void Dispose()
     {
-        if (commands.Commands.TryGetValue("/fctweaks", out var command) && command.Handler == OnCommand)
-            commands.RemoveHandler("/fctweaks");
-        pluginInterface.UiBuilder.Draw -= Draw;
+        pluginInterface.UiBuilder.Draw -= OnDraw;
         framework.Update -= OnFrameworkUpdate;
+        if (ownsCommand)
+            commands.RemoveHandler(CommandName);
         sorter.Dispose();
         resizer.Dispose();
     }
 
     private void OnCommand(string command, string arguments)
     {
+        if (arguments.Trim().Equals("status", StringComparison.OrdinalIgnoreCase))
+        {
+            var state = resizer.DescribeState();
+            log.Information("FC Tweaks status: {State}", state);
+            chat.Print($"[FC Tweaks] {state}");
+            return;
+        }
+
         resizer.ToggleExpansion();
-        chat.Print("[FC Tweaks] Expand/Collapse toggle queued. Open the FC window to see the saved size.");
-        log.Information("FC Tweaks command: {State}", resizer.GetDiagnosticState());
+        chat.Print($"[FC Tweaks] Free Company window {(resizer.IsExpanded ? "expanded" : "collapsed")}.");
     }
 
-    private void OnFrameworkUpdate(IFramework frameworkContext)
+    private void OnFrameworkUpdate(IFramework _)
     {
         resizer.Update();
         sorter.Update();
     }
 
-    private void Draw()
+    private void OnDraw()
     {
+        resizer.Draw();
         sorter.Draw();
-        if (!resizer.IsFreeCompanyVisible || !resizer.CanExpand)
-            return;
-
-        var (x, y) = resizer.GetButtonPosition();
-        ImGui.SetNextWindowPos(new Vector2(x, y), ImGuiCond.Always);
-        ImGui.SetNextWindowBgAlpha(0);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
-
-        var flags = ImGuiWindowFlags.NoDecoration
-                    | ImGuiWindowFlags.NoBackground
-                    | ImGuiWindowFlags.NoSavedSettings
-                    | ImGuiWindowFlags.NoFocusOnAppearing
-                    | ImGuiWindowFlags.NoNav
-                    | ImGuiWindowFlags.AlwaysAutoResize;
-
-        if (!ImGui.Begin("FC Tweaks Overlay", flags))
-        {
-            ImGui.End();
-            ImGui.PopStyleVar();
-            return;
-        }
-
-        if (ImGui.Button(resizer.IsExpanded ? "Collapse##FC" : "Expand##FC"))
-            resizer.ToggleExpansion();
-
-        ImGui.End();
-        ImGui.PopStyleVar();
     }
 }
