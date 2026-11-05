@@ -53,6 +53,25 @@ foreach (var mode in Enum.GetValues<RosterSortMode>())
 }
 
 var random = new Random(41);
+var session = new RosterSortSession { Mode = RosterSortMode.Name };
+session.MarkUpdated(0);
+Equal([false, false, true], new[] { session.CanSort(0), session.CanSort(999), session.CanSort(1000) },
+    "Full one-second quiet period, exact boundary");
+for (var member = 1; member <= 200; member++)
+{
+    var now = member * 100L;
+    session.MarkUpdated(now);
+    Equal([false, false], new[] { session.CanSort(now), session.CanSort(now + 999) },
+        "Each incremental member update restarts the quiet period");
+}
+Equal([true], new[] { session.CanSort(21000) }, "Sorting resumes one second after final member arrives");
+session.Close();
+Equal([false, true], new[] { session.CanSort(50000), session.Mode is null }, "Close forgets sorting");
+session.MarkUpdated(51000);
+Equal([false], new[] { session.CanSort(52000) }, "Reopening alone does not reactivate sorting");
+session.Mode = RosterSortMode.Rank;
+Equal([true], new[] { session.CanSort(52000) }, "Explicit new selection reactivates sorting after quiet period");
+
 for (var sample = 0; sample < 100; sample++)
 {
     var roster = Enumerable.Range(0, sample * 2 + 1).Select(i =>

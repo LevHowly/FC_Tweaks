@@ -10,7 +10,13 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.4**.
+Current release: **0.1.5**.
+
+Version 0.1.5 restores v0.1.0's frame capture/sizing behavior, including sizing
+the parent frame without requiring its own OnSetup flag. Pre-draw corrections
+use the intended expanded height, not a list height that native updates may reset.
+Row allocation remains on framework updates, with transition/identity guards.
+Sorting waits for a full second without roster updates and is forgotten on close.
 
 Version 0.1.4 reapplies native frame/divider/footer geometry immediately before
 drawing, so late native layout updates cannot leave the background at its old
@@ -60,17 +66,21 @@ Three small **Sort** buttons sit immediately to the right of the native **Name**
 Offline rows remain in their exact slots and retain their relative order.
 Online members visiting other worlds are included, even when their location shows
 a world name or elapsed-time text. Equal sort keys retain their previous order.
-The last selected sort is remembered until logout or plugin unload. It is reapplied
-to the current loaded page after native roster refreshes, page changes, reopening
-the window, and area transitions. Checks run at most four times per second while
-the roster is visible; an already sorted roster causes no native row swaps or UI
-update requests. Sorting waits for pending native data updates to finish and pauses
-while a context menu is open or a list row is held.
+The selected sort is remembered only while the window remains open. It is reapplied
+to the current loaded page after native roster refreshes or page changes, but only
+after a full second without roster updates. Every native roster update and change
+in loaded member count restarts this delay, so members arriving one by one are not
+repeatedly shuffled during loading. Checks run at most four times per second once
+the delay has elapsed; an already sorted roster causes no native row swaps or UI
+update requests. Sorting also waits for pending native data updates to finish and
+pauses while a context menu is open or a list row is held. Closing, hiding, or
+destroying the window clears the selected sort; reopening requires another click.
 
 Sorting runs on the framework update, never in the rendering callback. It uses
 the native FC row-swap handler to keep names, status, rank, memo indexes, and
 right-click member identity together. Pending button requests and UI pointers are discarded on close,
-destruction, zoning, or logout; only the selected sort mode survives until logout.
+destruction, zoning, or logout. The selected sort survives zoning only if the
+window remains open, and is cleared on close, hide, destruction, or logout.
 Unsupported native functions or array layouts disable sorting and report an error in the
 Dalamud log; expansion remains independent. Native interaction and layout still
 require in-game testing.

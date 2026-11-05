@@ -35,6 +35,23 @@ internal static class RosterSort
         return order;
     }
 
+    internal sealed class RosterSortSession
+    {
+        private long? lastUpdate;
+        public RosterSortMode? Mode { get; set; }
+
+        public void MarkUpdated(long now) => lastUpdate = now;
+
+        public bool CanSort(long now) => Mode is not null && lastUpdate is { } updated
+            && now - updated >= 1000;
+
+        public void Close()
+        {
+            Mode = null;
+            lastUpdate = null;
+        }
+    }
+
     public static IEnumerable<(int First, int Second)> GetSwaps(IReadOnlyList<int> order)
     {
         var sources = Enumerable.Range(0, order.Count).ToArray();

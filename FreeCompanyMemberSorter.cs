@@ -37,7 +37,12 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
     private nint visibleAddon;
     private byte visiblePage;
     private bool disabled;
-    private RosterSortMode? activeMode;
+    private readonly RosterSortSession sortSession = new();
+    private nint observedProxy;
+    private nint observedData;
+    private uint observedCount;
+    private int observedListLength;
+    private byte observedPage;
     private long nextSortCheck;
     private string? lastWaitReason;
 
@@ -65,12 +70,15 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
 
         lifecycle.RegisterListener(AddonEvent.PreClose, AddonName, OnClosing);
         lifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnClosing);
+        lifecycle.RegisterListener(AddonEvent.PostRequestedUpdate, AddonName, OnRosterUpdated);
     }
 
     public void Dispose()
     {
         lifecycle.UnregisterListener(AddonEvent.PreClose, AddonName, OnClosing);
         lifecycle.UnregisterListener(AddonEvent.PreFinalize, AddonName, OnClosing);
+        lifecycle.UnregisterListener(AddonEvent.PostRequestedUpdate, AddonName, OnRosterUpdated);
+        sortSession.Close();
         Clear();
     }
 
@@ -78,7 +86,7 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
     {
         if (condition[ConditionFlag.LoggingOut])
         {
-            activeMode = null;
+            sortSession.Close();
             Clear();
             return;
         }
@@ -93,9 +101,14 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         var agent = AgentFreeCompany.Instance();
         if (addon == null || !addon->IsReady || !addon->IsVisible || agent == null)
         {
+            sortSession.Close();
             Clear();
             return;
         }
+
+        if (visibleAddon != 0 && visibleAddon != (nint)addon)
+            sortSession.Close();
+        ObserveRoster(addon, agent);
 
         var request = pending;
         pending = null;
@@ -103,7 +116,7 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         {
             if (queued.Addon == (nint)addon && queued.Page == agent->CurrentMemberPageIndex)
             {
-                activeMode = queued.Mode;
+                sortSession.Mode = queued.Mode;
                 nextSortCheck = 0;
                 lastWaitReason = null;
             }
@@ -113,7 +126,8 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
             }
         }
 
-        if (!disabled && activeMode is { } mode && Environment.TickCount64 >= nextSortCheck)
+        if (!disabled && sortSession.Mode is { } mode && sortSession.CanSort(Environment.TickCount64)
+            && Environment.TickCount64 >= nextSortCheck)
         {
             nextSortCheck = Environment.TickCount64 + 250;
             var contextMenu = gameGui.GetAddonByName<AtkUnitBase>("ContextMenu");
@@ -164,7 +178,8 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
                 ImGui.EndDisabled();
                 if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                     ImGui.SetTooltip(disabled ? "Sorting is unavailable; see the Dalamud log."
-                        : button.Tooltip + (activeMode == button.Mode ? "\nActive; reapplied after roster refreshes." : ""));
+                        : button.Tooltip + (sortSession.Mode == button.Mode
+                            ? "\nActive; waits for one second without roster updates. Cleared on close." : ""));
             }
             ImGui.End();
             ImGui.PopStyleVar(2);
@@ -266,7 +281,32 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         strings->UpdateState = 1;
     }
 
-    private void OnClosing(AddonEvent type, AddonArgs args) => Clear();
+    private void OnClosing(AddonEvent type, AddonArgs args)
+    {
+        sortSession.Close();
+        Clear();
+    }
+
+    private void OnRosterUpdated(AddonEvent type, AddonArgs args)
+        => sortSession.MarkUpdated(Environment.TickCount64);
+
+    private void ObserveRoster(AtkUnitBase* addon, AgentFreeCompany* agent)
+    {
+        var proxy = agent->InfoProxyFreeCompanyMember;
+        var list = addon->GetComponentListById(24);
+        var data = proxy == null ? 0 : (nint)proxy->CharData;
+        var count = proxy == null ? 0 : proxy->EntryCount;
+        var length = list == null ? 0 : list->ListLength;
+        if (visibleAddon != (nint)addon || observedProxy != (nint)proxy || observedData != data
+            || observedCount != count || observedListLength != length
+            || observedPage != agent->CurrentMemberPageIndex)
+            sortSession.MarkUpdated(Environment.TickCount64);
+        observedProxy = (nint)proxy;
+        observedData = data;
+        observedCount = count;
+        observedListLength = length;
+        observedPage = agent->CurrentMemberPageIndex;
+    }
 
     private void Clear()
     {

@@ -183,12 +183,11 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             || addon->GetComponentListById(MemberListNodeId) != memberList)
             return;
 
-        var extraHeight = memberList->ListHeight - original.ListHeight;
-        if (extraHeight >= 0)
-        {
-            ApplyWindowHeight(memberWindow, extraHeight);
-            ApplyWindowHeight(parentWindow, extraHeight);
-        }
+        var expandedRowCount = Math.Min(memberList->ListLength, original.RowCount * 2);
+        var rowStep = memberList->RowStepY > 0 ? memberList->RowStepY : memberList->ItemHeight;
+        var extraHeight = Math.Max(0, expandedRowCount - original.RowCount) * rowStep;
+        ApplyWindowHeight(memberWindow, extraHeight);
+        ApplyWindowHeight(parentWindow, extraHeight);
     }
 
     private void OnClosing(AddonEvent type, AddonArgs args)
@@ -286,7 +285,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private WindowLayout? CaptureWindow(string name)
     {
         var window = gameGui.GetAddonByName<AtkUnitBase>(name);
-        if (window == null || !window->IsReady || window->WindowNode == null)
+        if (window == null)
             return null;
 
         ushort width = 0;
@@ -336,7 +335,9 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             return;
 
         var window = gameGui.GetAddonByName<AtkUnitBase>(layout.Name);
-        if (IsTransitioning || window == null || (nint)window != layout.Address || !window->IsReady)
+        // Match v0.1.0: the parent frame need not have run its own OnSetup.
+        // The visible roster, transition guard, and exact addon identity gate access.
+        if (IsTransitioning || window == null || (nint)window != layout.Address)
             return;
 
         var height = ToUShort(layout.Height + extraHeight);
