@@ -1,24 +1,38 @@
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace FC_Tweaks;
 
-internal sealed unsafe class FreeCompanyWindowResizer
+internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 {
     private const string AddonName = "FreeCompanyMember";
+    private const string ParentAddonName = "FreeCompany";
     private const uint MemberListNodeId = 24;
     private const int SearchIntervalFrames = 30;
 
     private readonly IGameGui gameGui;
+    private readonly IAddonLifecycle addonLifecycle;
+    private readonly IPluginLog log;
     private AtkUnitBase* addon;
     private AtkComponentList* memberList;
     private Layout? originalLayout;
     private bool isExpanded;
     private int framesUntilNextSearch;
+    private WindowLayout? memberWindow;
+    private WindowLayout? parentWindow;
 
-    public FreeCompanyWindowResizer(IGameGui gameGui)
+    public FreeCompanyWindowResizer(IGameGui gameGui, IAddonLifecycle addonLifecycle, IPluginLog log)
     {
         this.gameGui = gameGui;
+        this.addonLifecycle = addonLifecycle;
+        this.log = log;
+        foreach (var name in new[] { AddonName, ParentAddonName })
+        {
+            addonLifecycle.RegisterListener(AddonEvent.PreClose, name, OnClosing);
+            addonLifecycle.RegisterListener(AddonEvent.PreFinalize, name, OnClosing);
+        }
     }
 
     public bool IsExpanded => isExpanded;
@@ -30,6 +44,7 @@ internal sealed unsafe class FreeCompanyWindowResizer
         var currentAddon = gameGui.GetAddonByName<AtkUnitBase>(AddonName);
         if (currentAddon != addon)
         {
+            Restore();
             addon = currentAddon;
             memberList = null;
             originalLayout = null;
@@ -90,10 +105,33 @@ internal sealed unsafe class FreeCompanyWindowResizer
 
     public void Restore()
     {
-        if (addon != null && memberList != null && originalLayout is not null)
+        if (addon != null && gameGui.GetAddonByName<AtkUnitBase>(AddonName) == addon
+            && memberList != null && originalLayout is not null)
             RestoreLayout();
 
+        ApplyWindowHeight(memberWindow, 0);
+        ApplyWindowHeight(parentWindow, 0);
         isExpanded = false;
+    }
+
+    public void Dispose()
+    {
+        Restore();
+        foreach (var name in new[] { AddonName, ParentAddonName })
+        {
+            addonLifecycle.UnregisterListener(AddonEvent.PreClose, name, OnClosing);
+            addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, name, OnClosing);
+        }
+    }
+
+    private void OnClosing(AddonEvent type, AddonArgs args)
+    {
+        Restore();
+        memberList = null;
+        originalLayout = null;
+        memberWindow = null;
+        parentWindow = null;
+        framesUntilNextSearch = 0;
     }
 
     private void CaptureLayout()
@@ -113,6 +151,10 @@ internal sealed unsafe class FreeCompanyWindowResizer
             list->ListWidth,
             list->ListHeight,
             list->VisibleRowCount);
+        memberWindow = CaptureWindow(AddonName);
+        parentWindow = CaptureWindow(ParentAddonName);
+        if (parentWindow is null)
+            log.Warning("FC Tweaks could not capture the Free Company background window; its frame cannot be expanded.");
     }
 
     private void ApplyExpandedLayout()
@@ -128,13 +170,17 @@ internal sealed unsafe class FreeCompanyWindowResizer
         var expandedListHeight = ToUShort(original.ListHeight + (expandedRowCount - original.RowCount) * rowStep);
         var expandedListWidth = ToUShort(original.ListWidth);
         var expandedWindowWidth = original.WindowWidth;
-        var expandedWindowHeight = ToUShort(original.WindowHeight * 2);
+        var extraHeight = expandedListHeight - original.ListHeight;
+        var expandedWindowHeight = ToUShort(original.WindowHeight + extraHeight);
 
         ushort currentWindowWidth = 0;
         ushort currentWindowHeight = 0;
         addon->GetSize(&currentWindowWidth, &currentWindowHeight, false);
         if (currentWindowWidth != expandedWindowWidth || currentWindowHeight != expandedWindowHeight)
             addon->SetSize(expandedWindowWidth, expandedWindowHeight);
+
+        ApplyWindowHeight(memberWindow, extraHeight);
+        ApplyWindowHeight(parentWindow, extraHeight);
 
         if (memberList->VisibleRowCount != expandedRowCount
             || memberList->ListWidth != expandedListWidth
@@ -163,9 +209,60 @@ internal sealed unsafe class FreeCompanyWindowResizer
             memberList->SetVisibleRowCount(original.RowCount);
             memberList->SetSize(ToUShort(original.ListWidth), ToUShort(original.ListHeight));
         }
+
+        ApplyWindowHeight(memberWindow, 0);
+        ApplyWindowHeight(parentWindow, 0);
+    }
+
+    private WindowLayout? CaptureWindow(string name)
+    {
+        var window = gameGui.GetAddonByName<AtkUnitBase>(name);
+        if (window == null)
+            return null;
+
+        ushort width = 0;
+        ushort height = 0;
+        window->GetSize(&width, &height, false);
+        return new WindowLayout(name, (nint)window, width, height,
+            window->WindowNode == null ? null : window->WindowNode->Height);
+    }
+
+    private void ApplyWindowHeight(WindowLayout? layout, int extraHeight)
+    {
+        if (layout is null)
+            return;
+
+        var window = gameGui.GetAddonByName<AtkUnitBase>(layout.Name);
+        if (window == null || (nint)window != layout.Address)
+            return;
+
+        var height = ToUShort(layout.Height + extraHeight);
+        ushort currentWidth = 0;
+        ushort currentHeight = 0;
+        window->GetSize(&currentWidth, &currentHeight, false);
+        var changed = currentWidth != layout.Width || currentHeight != height;
+        if (changed)
+            window->SetSize(layout.Width, height);
+
+        // SetSize alone does not resize the visible native window frame.
+        if (window->WindowNode != null && layout.FrameHeight is { } frameHeight)
+        {
+            var targetFrameHeight = ToUShort(frameHeight + extraHeight);
+            if (window->WindowNode->Height != targetFrameHeight)
+            {
+                window->WindowNode->SetHeight(targetFrameHeight);
+                window->WindowNode->Component->UldManager.UpdateDrawNodeList();
+                changed = true;
+            }
+        }
+
+        if (changed)
+            window->UpdateCollisionNodeList(false);
     }
 
     private static ushort ToUShort(int value) => (ushort)Math.Clamp(value, 1, ushort.MaxValue);
+
+    private sealed record WindowLayout(string Name, nint Address, ushort Width, ushort Height, ushort? FrameHeight);
 
     private sealed record Layout(
         ushort WindowWidth,

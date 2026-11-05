@@ -11,11 +11,12 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IFramework framework;
     private readonly FreeCompanyWindowResizer resizer;
 
-    public Plugin(IDalamudPluginInterface pluginInterface, IGameGui gameGui, IFramework framework)
+    public Plugin(IDalamudPluginInterface pluginInterface, IGameGui gameGui, IFramework framework,
+        IAddonLifecycle addonLifecycle, IPluginLog log)
     {
         this.pluginInterface = pluginInterface;
         this.framework = framework;
-        resizer = new FreeCompanyWindowResizer(gameGui);
+        resizer = new FreeCompanyWindowResizer(gameGui, addonLifecycle, log);
 
         framework.Update += OnFrameworkUpdate;
         pluginInterface.UiBuilder.Draw += Draw;
@@ -27,7 +28,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         pluginInterface.UiBuilder.Draw -= Draw;
         framework.Update -= OnFrameworkUpdate;
-        resizer.Restore();
+        resizer.Dispose();
     }
 
     private void OnFrameworkUpdate(IFramework frameworkContext) => resizer.Update();
