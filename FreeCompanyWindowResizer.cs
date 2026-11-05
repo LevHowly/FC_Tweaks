@@ -9,39 +9,36 @@ using static FC_Tweaks.FreeCompanyUi;
 namespace FC_Tweaks;
 
 /// <summary>
-/// Makes the Free Company window taller and gives the Members list the extra rows.
+/// Makes the Free Company window taller and gives the lists on its tabs (see <see cref="TabList"/>)
+/// the extra height.
 /// <para>
 /// The saved <see cref="Configuration.Expanded"/> preference is the only state; every frame the
 /// native windows are reconciled towards it. Toggling therefore never touches native memory.
 /// </para>
-/// <para>
-/// Safety rules learned from crashes: the member list is only resized from the framework update,
-/// never from draw callbacks or close/finalize, and not while it has a native update pending.
-/// Its row count is never set directly; <c>SetSize</c> lets the game recalculate visible rows.
-/// </para>
-/// <para>
-/// The list's real size is its owner node's size. Native <c>SetSize</c> resizes only that node and
-/// never updates <c>ListWidth</c>/<c>ListHeight</c>, so those fields must not be used to measure it.
-/// </para>
 /// </summary>
 internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 {
-    /// <summary>Used until the Members list has been seen and its row height measured.</summary>
-    private const int DefaultExtraHeight = 252;
+    /// <summary>The Members list's native height (freecompanymember.uld node 24), so it doubles.</summary>
+    private const int ExpandedExtraHeight = 252;
     private static readonly Vector2 FallbackButtonOffset = new(-100, 8);
     private static readonly Vector2 FallbackButtonSize = new(64, 28);
 
     private static readonly FrameSpec WindowSpec = new(WindowAddon, HasFrame: true,
         [new DecorationSpec(19, NodeType.NineGrid, IsRotatedDivider: true)]);
 
-    // Move the footer groups, not their children, so the offset is not applied twice.
-    private static readonly FrameSpec MembersSpec = new(MembersAddon, HasFrame: false,
+    private static readonly TabListSpec[] TabListSpecs =
     [
-        new DecorationSpec(45, NodeType.Res, IsRotatedDivider: false),
-        new DecorationSpec(49, NodeType.Res, IsRotatedDivider: false),
-    ]);
+        // Move the footer groups, not their children, so the offset is not applied twice.
+        new(MemberListNodeId, new FrameSpec(MembersAddon, HasFrame: false,
+        [
+            new DecorationSpec(45, NodeType.Res, IsRotatedDivider: false),
+            new DecorationSpec(49, NodeType.Res, IsRotatedDivider: false),
+        ])),
+        new(TopicsOnlineListNodeId, new FrameSpec(TopicsAddon, HasFrame: false, [])),
+        new(ActivityListNodeId, new FrameSpec(ActivityAddon, HasFrame: false, [])),
+    ];
 
-    private static readonly string[] Addons = [WindowAddon, MembersAddon];
+    private static readonly string[] Addons = [WindowAddon, .. TabListSpecs.Select(t => t.Frame.Name)];
     private static readonly AddonEvent[] RefreshEvents = [AddonEvent.PostUpdate, AddonEvent.PreDraw];
     private static readonly AddonEvent[] ResetEvents = [AddonEvent.PreSetup, AddonEvent.PreFinalize];
 
@@ -52,9 +49,8 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private readonly Configuration configuration;
     private readonly Action saveConfiguration;
 
+    private readonly TabList[] tabLists;
     private AddonFrame? windowFrame;
-    private AddonFrame? membersFrame;
-    private ListBaseline? listBaseline;
     private HiddenButton? hiddenButton;
     private bool reportedMissingButton;
     private (Vector2 Position, Vector2 Size)? expandButton;
@@ -68,6 +64,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         this.log = log;
         this.configuration = configuration;
         this.saveConfiguration = saveConfiguration;
+        tabLists = TabListSpecs.Select(spec => new TabList(spec, log)).ToArray();
         foreach (var addon in Addons)
         {
             foreach (var type in ResetEvents)
@@ -79,8 +76,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 
     public bool IsExpanded => configuration.Expanded;
 
-    /// <summary>The outer window's extra height; it does not wait for the Members list.</summary>
-    private int ExtraHeight => IsExpanded ? listBaseline?.ExtraHeight ?? DefaultExtraHeight : 0;
+    private int ExtraHeight => IsExpanded ? ExpandedExtraHeight : 0;
 
     public void ToggleExpansion()
     {
@@ -104,9 +100,12 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         windowFrame?.Apply(window, ExtraHeight);
         expandButton = HideCommunityFinder(window);
 
-        var members = GetAddon(MembersAddon);
-        if (IsShown(members) && members->IsReady)
-            UpdateMembers(members);
+        foreach (var tabList in tabLists)
+        {
+            var tab = GetAddon(tabList.AddonName);
+            if (IsShown(tab) && tab->IsReady)
+                tabList.Update(tab, ExtraHeight);
+        }
     }
 
     /// <summary>Draws Expand/Collapse where the hidden Community Finder button was.</summary>
@@ -138,11 +137,14 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             return $"expanded={IsExpanded}; zoning, native state not read";
 
         var window = GetAddon(WindowAddon);
-        var members = GetAddon(MembersAddon);
+        var tabs = tabLists.Select(t =>
+        {
+            var tab = GetAddon(t.AddonName);
+            return $"{t.AddonName} {DescribeAddon(tab)}: {t.Describe(tab)}";
+        });
         return $"expanded={IsExpanded}, extraHeight={ExtraHeight}; " +
                $"window {DescribeAddon(window)}: {windowFrame?.Describe(window) ?? "not captured"}; " +
-               $"members {DescribeAddon(members)}: {membersFrame?.Describe(members) ?? "not captured"}, " +
-               $"list {listBaseline?.ToString() ?? "not captured"}; " +
+               $"{string.Join("; ", tabs)}; " +
                $"button {(expandButton is { } b ? $"{b.Position} {b.Size}" : "hidden")}";
     }
 
@@ -159,11 +161,12 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         if (IsTransitioning(condition))
             return;
 
-        var members = GetAddon(MembersAddon);
-        var list = members != null && members->IsReady ? TryGetList(members) : null;
-        if (list != null)
-            ResizeList(list, listBaseline!.Height);
-        membersFrame?.Apply(members, 0);
+        foreach (var tabList in tabLists)
+        {
+            var tab = GetAddon(tabList.AddonName);
+            if (tab != null && tab->IsReady)
+                tabList.Restore(tab);
+        }
 
         var window = GetAddon(WindowAddon);
         windowFrame?.Apply(window, 0);
@@ -173,65 +176,6 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             if ((nint)node == button.Address)
                 node->ToggleVisibility(button.WasVisible);
         }
-    }
-
-    private void UpdateMembers(AtkUnitBase* members)
-    {
-        if (membersFrame is not null && membersFrame.Address != (nint)members)
-            ForgetMembers();
-
-        var list = members->GetComponentListById(MemberListNodeId);
-        if (list == null)
-            return;
-        if (listBaseline is not null && listBaseline.Component != (nint)list)
-        {
-            log.Warning("FC Tweaks: the member list component changed; recapturing its layout.");
-            ForgetMembers();
-        }
-
-        if (listBaseline is null)
-        {
-            var owner = list->OwnerNode;
-            if (owner == null || owner->Width == 0 || owner->Height == 0
-                || !list->IsVerticalScroll || list->VisibleRowCount <= 0 || list->ItemHeight <= 0)
-                return;
-            membersFrame = AddonFrame.TryCapture(members, MembersSpec, log);
-            if (membersFrame is null)
-                return;
-            var rowStep = list->RowStepY > 0 ? list->RowStepY : list->ItemHeight;
-            listBaseline = new ListBaseline((nint)list, owner->Width, owner->Height,
-                list->VisibleRowCount * rowStep);
-        }
-
-        if (!list->IsUpdatePending)
-            ResizeList(list, listBaseline.Height + (IsExpanded ? listBaseline.ExtraHeight : 0));
-
-        membersFrame?.Apply(members, MembersExtraHeight(members));
-    }
-
-    /// <summary>Resizes the list's owner node; the game then recalculates its visible rows.</summary>
-    private void ResizeList(AtkComponentList* list, int height)
-    {
-        var owner = list->OwnerNode;
-        if (owner != null && (owner->Width != listBaseline!.Width || owner->Height != height))
-            list->SetSize((ushort)listBaseline.Width, (ushort)height);
-    }
-
-    /// <summary>The Members frame follows the list's actual height, so they never disagree.</summary>
-    private int MembersExtraHeight(AtkUnitBase* members)
-    {
-        var list = TryGetList(members);
-        return list == null || list->OwnerNode == null
-            ? 0
-            : Math.Max(0, list->OwnerNode->Height - listBaseline!.Height);
-    }
-
-    private AtkComponentList* TryGetList(AtkUnitBase* members)
-    {
-        if (listBaseline is null || members == null || membersFrame?.Address != (nint)members)
-            return null;
-        var list = members->GetComponentListById(MemberListNodeId);
-        return (nint)list == listBaseline.Component ? list : null;
     }
 
     /// <summary>Hides the native Community Finder button and returns where to draw Expand instead.</summary>
@@ -284,8 +228,8 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         }
         else
         {
-            // Visual only: the list itself is never resized from a draw callback.
-            membersFrame?.Apply(addon, MembersExtraHeight(addon));
+            // Visual only: lists themselves are never resized from a draw callback.
+            FindTabList(args.AddonName)?.RefreshFooter(addon);
         }
     }
 
@@ -299,15 +243,11 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         }
         else
         {
-            ForgetMembers();
+            FindTabList(args.AddonName)?.Forget();
         }
     }
 
-    private void ForgetMembers()
-    {
-        membersFrame = null;
-        listBaseline = null;
-    }
+    private TabList? FindTabList(string addonName) => tabLists.FirstOrDefault(t => t.AddonName == addonName);
 
     private AtkUnitBase* GetAddon(string name) => (AtkUnitBase*)gameGui.GetAddonByName(name).Address;
 
@@ -315,8 +255,6 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         ? "absent"
         : $"{(nint)addon:X} visible={addon->IsVisible} ready={addon->IsReady} " +
           $"loaded={addon->UldManager.LoadedState} windowNode={(nint)addon->WindowNode:X}";
-
-    private sealed record ListBaseline(nint Component, int Width, int Height, int ExtraHeight);
 
     private readonly record struct HiddenButton(nint Address, bool WasVisible);
 }

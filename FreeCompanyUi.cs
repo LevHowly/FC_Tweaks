@@ -13,7 +13,16 @@ internal static unsafe class FreeCompanyUi
     /// <summary>The Members tab, a separate addon drawn inside <see cref="WindowAddon"/>.</summary>
     public const string MembersAddon = "FreeCompanyMember";
 
+    /// <summary>The Topics tab (freecompanytopics.uld).</summary>
+    public const string TopicsAddon = "FreeCompanyTopics";
+
+    /// <summary>The Activity tab (freecompanyactivity.uld).</summary>
+    public const string ActivityAddon = "FreeCompanyActivity";
+
     public const uint MemberListNodeId = 24;
+    /// <summary>"Members Online and on Home World", the bottom section of Topics.</summary>
+    public const uint TopicsOnlineListNodeId = 27;
+    public const uint ActivityListNodeId = 10;
     public const uint CommunityFinderButtonNodeId = 2;
     public const uint NameHeaderNodeId = 12;
     public const uint LocationHeaderNodeId = 14;

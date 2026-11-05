@@ -10,7 +10,7 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.10**.
+Current release: **0.1.11**.
 
 ## Expand / Collapse
 
@@ -18,15 +18,18 @@ An **Expand / Collapse** button replaces Community Finder at the top right of
 the Free Company window (the native button is hidden while the plugin runs and
 restored when it unloads).
 
-- **Expand** makes the whole FC window taller on every tab and gives the Members
-  list that many extra rows. Widths never change. The left divider stretches and
-  the Members page selector/footer move down with it.
+- **Expand** makes the whole FC window 252 units taller on every tab (the
+  Members list's own height, so it doubles). These lists get the extra space:
+  - **Members**: the member list; its page selector/footer moves down.
+  - **Topics**: the "Members Online and on Home World" list at the bottom.
+  - **Activity**: the activity notices list.
+  Widths never change. The left divider stretches with the window.
 - The choice is **saved**: switching tabs, closing the window, zoning, and
   reloading the plugin keep it.
 - `/fctweaks` toggles the same setting (even with the window closed).
   `/fctweaks status` prints what the plugin sees, which helps with bug reports.
 
-Other tabs keep their original content layout inside the taller frame.
+Rank, Actions and Info keep their original layout inside the taller frame.
 
 How it works, briefly:
 
@@ -35,16 +38,17 @@ How it works, briefly:
 - The outer `FreeCompany` window is captured once it is visible with its nodes
   loaded. Its `IsReady` flag is not used: it does not reliably report true for
   this window, which previously stopped the background frame from growing.
-- The Members list is resized as soon as it appears, only from the framework
-  update, and only with the game's own `SetSize` (which recalculates visible
-  rows). Its row count is never forced. Its size is measured from its owner
-  node, because `SetSize` does not update the list's `ListHeight` field.
+- Lists are resized as soon as they appear, only from the framework update,
+  and only with the game's own `SetSize` (which recalculates visible rows).
+  Row counts are never forced. Sizes are measured from the list's owner node,
+  because `SetSize` does not update the list's `ListHeight` field.
 - Addons that are set up again or destroyed are forgotten, never restored
   through. Nothing native is touched while zoning or logging out.
 
 Verified native layout nodes: FreeCompany node 2 (Community Finder) and node 19
 (the rotated left divider); FreeCompanyMember node 24 (member list) and groups
-45 and 49 (page selectors and footer separator).
+45 and 49 (page selectors and footer separator); FreeCompanyTopics node 27
+(members online); FreeCompanyActivity node 10 (notices).
 
 ## Online member sorting
 
@@ -73,6 +77,8 @@ error; Expand / Collapse keeps working.
 
 ## Changelog
 
+- **0.1.11** Also enlarge the Topics "Members Online" list and the Activity list.
+  The window always grows by exactly 252 units.
 - **0.1.10** Move the page selector/footer down with the list (the list's growth
   was measured from a field the game never updates, so it always read 0). Grow
   the list immediately instead of after members finish loading. Collapse now
