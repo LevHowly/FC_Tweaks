@@ -18,7 +18,9 @@ public sealed class Plugin : IDalamudPlugin
     {
         this.pluginInterface = pluginInterface;
         this.framework = framework;
-        resizer = new FreeCompanyWindowResizer(gameGui, addonLifecycle, log, condition);
+        var configuration = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        resizer = new FreeCompanyWindowResizer(gameGui, addonLifecycle, log, condition, configuration,
+            () => pluginInterface.SavePluginConfig(configuration));
         sorter = new FreeCompanyMemberSorter(gameGui, condition, addonLifecycle, log, scanner, dataManager);
 
         framework.Update += OnFrameworkUpdate;
@@ -50,6 +52,7 @@ public sealed class Plugin : IDalamudPlugin
         var (x, y) = resizer.GetButtonPosition();
         ImGui.SetNextWindowPos(new Vector2(x, y), ImGuiCond.Always);
         ImGui.SetNextWindowBgAlpha(0);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
 
         var flags = ImGuiWindowFlags.NoDecoration
                     | ImGuiWindowFlags.NoBackground
@@ -61,6 +64,7 @@ public sealed class Plugin : IDalamudPlugin
         if (!ImGui.Begin("FC Tweaks Overlay", flags))
         {
             ImGui.End();
+            ImGui.PopStyleVar();
             return;
         }
 
@@ -68,5 +72,6 @@ public sealed class Plugin : IDalamudPlugin
             resizer.ToggleExpansion();
 
         ImGui.End();
+        ImGui.PopStyleVar();
     }
 }

@@ -10,7 +10,17 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.5**.
+Current release: **0.1.6**.
+
+Version 0.1.6 makes expansion a saved, global FC-window preference. Switching
+tabs or closing the window no longer collapses it or resets the button. The
+Expand/Collapse control replaces Community Finder at the top-right of the parent
+FC window on every tab. The native Community Finder button is hidden while the
+plugin is active and restored on safe unload; the replacement is a Dalamud button.
+Other tabs keep their existing content layouts for now, inside the taller frame.
+The Members list uses native SetSize/recalculation rather than separately forcing
+the visible-row count, and waits for incremental member loading to settle before
+resizing. Native teardown never resizes rows.
 
 Version 0.1.5 restores v0.1.0's frame capture/sizing behavior, including sizing
 the parent frame without requiring its own OnSetup flag. Pre-draw corrections
@@ -42,15 +52,14 @@ The button now queues the resize for the framework update instead of allocating
 native list rows during rendering. Addon readiness and component identity are
 checked before resizing; decoration updates never allocate list rows.
 
-FC Tweaks adds an **Expand** toggle to the Free Company member window. It
-doubles the member list's visible row count (up to the number of members).
-The member window and the vanilla Free Company background frame grow by the
-same added list height, leaving all widths unchanged. Click **Collapse** to
-restore the original size. Closing queues restoration for the next safe update
-if the window survives. Destroyed windows are not accessed again. Unloading
-restores live windows unless an area transition or logout is in progress.
-
-The toggle appears in the upper-right of the member window.
+FC Tweaks replaces Community Finder with an **Expand / Collapse** toggle in the
+upper-right of the Free Company window. It doubles the Members list's vertical
+space, leaving widths unchanged. The parent FC frame stays taller on all tabs,
+even while the Members addon is hidden or recreated. Expansion is saved in
+Dalamud configuration on each click and restored when reopening the FC window
+or reloading the plugin. Closing does not change this preference. Destroyed
+windows are never accessed again. Safe unload restores live native geometry and
+the original Community Finder button without changing the saved preference.
 
 ## Online member sorting
 

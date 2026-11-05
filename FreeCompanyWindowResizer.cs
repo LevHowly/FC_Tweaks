@@ -20,20 +20,28 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private AtkUnitBase* addon;
     private AtkComponentList* memberList;
     private Layout? originalLayout;
-    private bool isExpanded;
+    private readonly Configuration configuration;
+    private readonly Action saveConfiguration;
     private int framesUntilNextSearch;
     private WindowLayout? memberWindow;
     private WindowLayout? parentWindow;
     private bool toggleRequested;
-    private bool restorePending;
+    private int extraHeight = 252;
+    private nint replacedButton;
+    private bool buttonWasVisible;
+    private (float X, float Y) buttonPosition;
+    private long memberReadyAt;
+    private int lastMemberCount = -1;
 
     public FreeCompanyWindowResizer(IGameGui gameGui, IAddonLifecycle addonLifecycle, IPluginLog log,
-        ICondition condition)
+        ICondition condition, Configuration configuration, Action saveConfiguration)
     {
         this.gameGui = gameGui;
         this.addonLifecycle = addonLifecycle;
         this.log = log;
         this.condition = condition;
+        this.configuration = configuration;
+        this.saveConfiguration = saveConfiguration;
         foreach (var name in new[] { AddonName, ParentAddonName })
         {
             addonLifecycle.RegisterListener(AddonEvent.PreClose, name, OnClosing);
@@ -41,31 +49,57 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             addonLifecycle.RegisterListener(AddonEvent.PostUpdate, name, OnUpdated);
             addonLifecycle.RegisterListener(AddonEvent.PreDraw, name, OnUpdated);
         }
+        addonLifecycle.RegisterListener(AddonEvent.PreSetup, AddonName, OnFinalizing);
     }
 
-    public bool IsExpanded => isExpanded;
-    public bool CanExpand => memberList != null && originalLayout is not null;
+    public bool IsExpanded => configuration.Expanded;
+    public bool CanExpand => parentWindow is not null && replacedButton > 0;
     private bool IsTransitioning => condition[ConditionFlag.BetweenAreas]
                                     || condition[ConditionFlag.BetweenAreas51]
                                     || condition[ConditionFlag.LoggingOut];
 
-    public bool IsFreeCompanyVisible => !IsTransitioning && addon != null
-        && gameGui.GetAddonByName<AtkUnitBase>(AddonName) == addon
-        && addon->IsReady && addon->IsVisible;
+    public bool IsFreeCompanyVisible
+    {
+        get
+        {
+            if (IsTransitioning)
+                return false;
+            var parent = gameGui.GetAddonByName<AtkUnitBase>(ParentAddonName);
+            return parent != null && parent->IsVisible && parent->RootNode != null
+                && parent->WindowNode != null;
+        }
+    }
 
     public void Update()
     {
         if (IsTransitioning)
         {
-            QueueRestore();
+            toggleRequested = false;
             return;
         }
+
+        RefreshWindowLayout(ref parentWindow, ParentAddonName);
+        if (!IsFreeCompanyVisible)
+        {
+            toggleRequested = false;
+            return;
+        }
+
+        ReplaceCommunityFinder();
+        if (toggleRequested)
+        {
+            toggleRequested = false;
+            configuration.Expanded = !configuration.Expanded;
+            saveConfiguration();
+        }
+
+        ApplyWindowHeight(parentWindow, IsExpanded ? extraHeight : 0);
 
         var currentAddon = gameGui.GetAddonByName<AtkUnitBase>(AddonName);
         if (currentAddon != addon)
         {
             // The previous addon may already be freed. Never restore through it.
-            ForgetLayout();
+            ForgetMemberLayout();
             addon = currentAddon;
         }
 
@@ -76,22 +110,13 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         }
 
         if (!addon->IsVisible)
-        {
-            QueueRestore();
             return;
-        }
 
         if (memberList != null && addon->GetComponentListById(MemberListNodeId) != memberList)
         {
-            log.Warning("FC Tweaks roster component changed; cancelling expansion and recapturing its layout.");
-            ForgetLayout();
+            log.Warning("FC Tweaks roster component changed; discarding its old layout and recapturing.");
+            ForgetMemberLayout();
             addon = currentAddon;
-        }
-
-        if (restorePending)
-        {
-            restorePending = false;
-            Restore();
         }
 
         if (memberList == null && framesUntilNextSearch == 0)
@@ -107,22 +132,19 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         if (memberList != null)
         {
             RefreshWindowLayout(ref memberWindow, AddonName);
-            RefreshWindowLayout(ref parentWindow, ParentAddonName);
-        }
-
-        if (toggleRequested)
-        {
-            toggleRequested = false;
-            if (CanExpand)
+            if (lastMemberCount != memberList->ListLength)
             {
-                isExpanded = !isExpanded;
-                if (!isExpanded)
-                    RestoreLayout();
+                lastMemberCount = memberList->ListLength;
+                memberReadyAt = Environment.TickCount64 + 1000;
             }
+            if (Environment.TickCount64 < memberReadyAt || memberList->IsUpdatePending)
+                return;
         }
 
-        if (isExpanded)
+        if (IsExpanded)
             ApplyExpandedLayout();
+        else
+            RestoreLayout();
     }
 
     public void ToggleExpansion()
@@ -131,39 +153,28 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         toggleRequested = !toggleRequested;
     }
 
-    public (float X, float Y) GetButtonPosition()
-    {
-        if (addon == null)
-            return (0, 0);
-
-        short x = 0;
-        short y = 0;
-        addon->GetPosition(&x, &y);
-        return (x + addon->GetScaledWidth(true) - 112, y + 8);
-    }
+    public (float X, float Y) GetButtonPosition() => buttonPosition;
 
     public void Restore()
     {
         toggleRequested = false;
         if (IsTransitioning)
-        {
-            QueueRestore();
             return;
-        }
 
         if (addon != null && gameGui.GetAddonByName<AtkUnitBase>(AddonName) == addon
-            && addon->IsReady && memberList != null && originalLayout is not null
+            && addon->IsReady && addon->IsVisible && memberList != null && originalLayout is not null
             && addon->GetComponentListById(MemberListNodeId) == memberList)
             RestoreLayout();
 
         ApplyWindowHeight(memberWindow, 0);
         ApplyWindowHeight(parentWindow, 0);
-        isExpanded = false;
+        RestoreCommunityFinder();
     }
 
     public void Dispose()
     {
         Restore();
+        addonLifecycle.UnregisterListener(AddonEvent.PreSetup, AddonName, OnFinalizing);
         foreach (var name in new[] { AddonName, ParentAddonName })
         {
             addonLifecycle.UnregisterListener(AddonEvent.PreClose, name, OnClosing);
@@ -177,49 +188,44 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     {
         // Native animations can reset geometry after Update. Correct it before Draw,
         // but never allocate or resize list rows from a draw callback.
-        if (IsTransitioning || restorePending || !isExpanded || originalLayout is not { } original
-            || addon == null || gameGui.GetAddonByName<AtkUnitBase>(AddonName) != addon
-            || !addon->IsReady || !addon->IsVisible
-            || addon->GetComponentListById(MemberListNodeId) != memberList)
+        if (!IsFreeCompanyVisible)
             return;
 
-        var expandedRowCount = Math.Min(memberList->ListLength, original.RowCount * 2);
-        var rowStep = memberList->RowStepY > 0 ? memberList->RowStepY : memberList->ItemHeight;
-        var extraHeight = Math.Max(0, expandedRowCount - original.RowCount) * rowStep;
-        ApplyWindowHeight(memberWindow, extraHeight);
-        ApplyWindowHeight(parentWindow, extraHeight);
+        ReplaceCommunityFinder();
+        var delta = IsExpanded ? extraHeight : 0;
+        ApplyWindowHeight(parentWindow, delta);
+        if (addon != null && gameGui.GetAddonByName<AtkUnitBase>(AddonName) == addon
+            && addon->IsReady && addon->IsVisible
+            && addon->GetComponentListById(MemberListNodeId) == memberList)
+            ApplyWindowHeight(memberWindow, delta);
     }
 
     private void OnClosing(AddonEvent type, AddonArgs args)
     {
-        // Closing may run inside zone teardown; do not invoke any native resizing here.
-        QueueRestore();
+        // Tab close is not a request to collapse the global FC window.
+        toggleRequested = false;
     }
 
     private void OnFinalizing(AddonEvent type, AddonArgs args)
     {
-        // Finalization destroys nodes. Only discard managed bookkeeping.
-        ForgetLayout();
-    }
-
-    private void QueueRestore()
-    {
-        restorePending |= isExpanded;
-        isExpanded = false;
+        ForgetMemberLayout();
+        if (args.AddonName == ParentAddonName)
+        {
+            parentWindow = null;
+            replacedButton = 0;
+        }
         toggleRequested = false;
     }
 
-    private void ForgetLayout()
+    private void ForgetMemberLayout()
     {
         addon = null;
         memberList = null;
         originalLayout = null;
         memberWindow = null;
-        parentWindow = null;
         framesUntilNextSearch = 0;
-        isExpanded = false;
-        toggleRequested = false;
-        restorePending = false;
+        memberReadyAt = Environment.TickCount64 + 1000;
+        lastMemberCount = -1;
     }
 
     private void CaptureLayout()
@@ -234,7 +240,8 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             list->ListHeight,
             list->VisibleRowCount);
         memberWindow = CaptureWindow(AddonName);
-        parentWindow = CaptureWindow(ParentAddonName);
+        var rowStep = list->RowStepY > 0 ? list->RowStepY : list->ItemHeight;
+        extraHeight = originalLayout.RowCount * rowStep;
         if (parentWindow is null)
             log.Warning("FC Tweaks could not capture the Free Company background window; its frame cannot be expanded.");
     }
@@ -244,20 +251,13 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         if (addon == null || memberList == null || originalLayout is not { } original)
             return;
 
-        var expandedRowCount = (short)Math.Min(memberList->ListLength, original.RowCount * 2);
-        if (expandedRowCount <= original.RowCount)
-            return;
-
-        var rowStep = memberList->RowStepY > 0 ? memberList->RowStepY : memberList->ItemHeight;
-        var expandedListHeight = ToUShort(original.ListHeight + (expandedRowCount - original.RowCount) * rowStep);
+        var expandedListHeight = ToUShort(original.ListHeight + extraHeight);
         var expandedListWidth = ToUShort(original.ListWidth);
-        var extraHeight = expandedListHeight - original.ListHeight;
-
-        if (memberList->VisibleRowCount != expandedRowCount
-            || memberList->ListWidth != expandedListWidth
+        if (memberList->ListWidth != expandedListWidth
             || memberList->ListHeight != expandedListHeight)
         {
-            memberList->SetVisibleRowCount(expandedRowCount);
+            // SetSize recalculates the visible rows itself. Calling the row-count
+            // setter first traverses stale renderers when a tab has been rebuilt.
             memberList->SetSize(expandedListWidth, expandedListHeight);
         }
 
@@ -270,16 +270,46 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         if (addon == null || memberList == null || originalLayout is not { } original)
             return;
 
-        if (memberList->VisibleRowCount != original.RowCount
-            || memberList->ListWidth != original.ListWidth
+        if (memberList->ListWidth != original.ListWidth
             || memberList->ListHeight != original.ListHeight)
         {
-            memberList->SetVisibleRowCount(original.RowCount);
             memberList->SetSize(ToUShort(original.ListWidth), ToUShort(original.ListHeight));
         }
 
         ApplyWindowHeight(memberWindow, 0);
-        ApplyWindowHeight(parentWindow, 0);
+    }
+
+    private void ReplaceCommunityFinder()
+    {
+        var parent = gameGui.GetAddonByName<AtkUnitBase>(ParentAddonName);
+        if (parent == null || parentWindow is null || (nint)parent != parentWindow.Address)
+            return;
+        // freecompany.uld node 2 is the top-right Community Finder button.
+        var button = parent->GetNodeById(2);
+        if (button == null || (int)button->Type < 1000)
+        {
+            if (replacedButton != -1)
+                log.Error("FC Tweaks cannot replace Community Finder: native button node 2 is unavailable.");
+            replacedButton = -1;
+            return;
+        }
+        if (replacedButton != (nint)button)
+        {
+            replacedButton = (nint)button;
+            buttonWasVisible = button->IsVisible();
+        }
+        buttonPosition = (button->ScreenX, button->ScreenY);
+        button->ToggleVisibility(false);
+    }
+
+    private void RestoreCommunityFinder()
+    {
+        var parent = gameGui.GetAddonByName<AtkUnitBase>(ParentAddonName);
+        if (parent == null || parentWindow is null || (nint)parent != parentWindow.Address)
+            return;
+        var button = parent->GetNodeById(2);
+        if (button != null && (nint)button == replacedButton)
+            button->ToggleVisibility(buttonWasVisible);
     }
 
     private WindowLayout? CaptureWindow(string name)
