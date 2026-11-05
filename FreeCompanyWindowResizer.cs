@@ -39,6 +39,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             addonLifecycle.RegisterListener(AddonEvent.PreClose, name, OnClosing);
             addonLifecycle.RegisterListener(AddonEvent.PreFinalize, name, OnFinalizing);
             addonLifecycle.RegisterListener(AddonEvent.PostUpdate, name, OnUpdated);
+            addonLifecycle.RegisterListener(AddonEvent.PreDraw, name, OnUpdated);
         }
     }
 
@@ -103,6 +104,12 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             framesUntilNextSearch--;
         }
 
+        if (memberList != null)
+        {
+            RefreshWindowLayout(ref memberWindow, AddonName);
+            RefreshWindowLayout(ref parentWindow, ParentAddonName);
+        }
+
         if (toggleRequested)
         {
             toggleRequested = false;
@@ -162,12 +169,14 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             addonLifecycle.UnregisterListener(AddonEvent.PreClose, name, OnClosing);
             addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, name, OnFinalizing);
             addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, name, OnUpdated);
+            addonLifecycle.UnregisterListener(AddonEvent.PreDraw, name, OnUpdated);
         }
     }
 
     private void OnUpdated(AddonEvent type, AddonArgs args)
     {
-        // Reapply animated decorations after native updates, without allocating list rows.
+        // Native animations can reset geometry after Update. Correct it before Draw,
+        // but never allocate or resize list rows from a draw callback.
         if (IsTransitioning || restorePending || !isExpanded || originalLayout is not { } original
             || addon == null || gameGui.GetAddonByName<AtkUnitBase>(AddonName) != addon
             || !addon->IsReady || !addon->IsVisible
@@ -277,7 +286,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private WindowLayout? CaptureWindow(string name)
     {
         var window = gameGui.GetAddonByName<AtkUnitBase>(name);
-        if (window == null)
+        if (window == null || !window->IsReady || window->WindowNode == null)
             return null;
 
         ushort width = 0;
@@ -286,6 +295,15 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         return new WindowLayout(name, (nint)window, width, height,
             window->WindowNode == null ? null : window->WindowNode->Height,
             CaptureContentNodes(window, name));
+    }
+
+    private void RefreshWindowLayout(ref WindowLayout? layout, string name)
+    {
+        var window = gameGui.GetAddonByName<AtkUnitBase>(name);
+        if (window == null || (layout is not null && layout.Address != (nint)window))
+            layout = null;
+        // The parent window may not have been ready when the roster was captured.
+        layout ??= CaptureWindow(name);
     }
 
     private List<ContentNodeLayout> CaptureContentNodes(AtkUnitBase* window, string name)

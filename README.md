@@ -10,7 +10,14 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.3**.
+Current release: **0.1.4**.
+
+Version 0.1.4 reapplies native frame/divider/footer geometry immediately before
+drawing, so late native layout updates cannot leave the background at its old
+height. Native row allocation stays exclusively on framework updates. Background
+windows that are not ready when the roster first opens are captured later.
+The selected sort now survives roster refreshes and loading screens, pausing
+native access during zoning and resuming only after the roster is ready.
 
 Version 0.1.3 adds online-only sorting buttons beside Name, Location, and Rank.
 Sorting is limited to the currently loaded roster page and leaves offline rows
@@ -53,14 +60,18 @@ Three small **Sort** buttons sit immediately to the right of the native **Name**
 Offline rows remain in their exact slots and retain their relative order.
 Online members visiting other worlds are included, even when their location shows
 a world name or elapsed-time text. Equal sort keys retain their previous order.
-Sorting is applied when clicked, not continuously; changing pages or a native roster
-refresh can restore the game's ordering. Click again to reapply it.
+The last selected sort is remembered until logout or plugin unload. It is reapplied
+to the current loaded page after native roster refreshes, page changes, reopening
+the window, and area transitions. Checks run at most four times per second while
+the roster is visible; an already sorted roster causes no native row swaps or UI
+update requests. Sorting waits for pending native data updates to finish and pauses
+while a context menu is open or a list row is held.
 
 Sorting runs on the framework update, never in the rendering callback. It uses
 the native FC row-swap handler to keep names, status, rank, memo indexes, and
-right-click member identity together. Pending sorts are discarded on close,
-destruction, zoning, or logout. An open context menu cancels sorting. Unsupported
-native functions or array layouts disable sorting and report an error in the
+right-click member identity together. Pending button requests and UI pointers are discarded on close,
+destruction, zoning, or logout; only the selected sort mode survives until logout.
+Unsupported native functions or array layouts disable sorting and report an error in the
 Dalamud log; expansion remains independent. Native interaction and layout still
 require in-game testing.
 

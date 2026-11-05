@@ -37,6 +37,9 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
     private nint visibleAddon;
     private byte visiblePage;
     private bool disabled;
+    private RosterSortMode? activeMode;
+    private long nextSortCheck;
+    private string? lastWaitReason;
 
     public FreeCompanyMemberSorter(IGameGui gameGui, ICondition condition, IAddonLifecycle lifecycle,
         IPluginLog log, ISigScanner scanner, IDataManager dataManager)
@@ -73,8 +76,14 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
 
     public void Update()
     {
-        if (condition[ConditionFlag.BetweenAreas] || condition[ConditionFlag.BetweenAreas51]
-            || condition[ConditionFlag.LoggingOut])
+        if (condition[ConditionFlag.LoggingOut])
+        {
+            activeMode = null;
+            Clear();
+            return;
+        }
+
+        if (condition[ConditionFlag.BetweenAreas] || condition[ConditionFlag.BetweenAreas51])
         {
             Clear();
             return;
@@ -94,16 +103,24 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         {
             if (queued.Addon == (nint)addon && queued.Page == agent->CurrentMemberPageIndex)
             {
-                var contextMenu = gameGui.GetAddonByName<AtkUnitBase>("ContextMenu");
-                if (contextMenu != null && contextMenu->IsVisible)
-                    log.Warning("FC Tweaks sorting cancelled because a member context menu is open.");
-                else if (!disabled)
-                    Sort(addon, agent, queued.Mode);
+                activeMode = queued.Mode;
+                nextSortCheck = 0;
+                lastWaitReason = null;
             }
             else
             {
                 log.Warning("FC Tweaks sorting cancelled because the roster window or page changed.");
             }
+        }
+
+        if (!disabled && activeMode is { } mode && Environment.TickCount64 >= nextSortCheck)
+        {
+            nextSortCheck = Environment.TickCount64 + 250;
+            var contextMenu = gameGui.GetAddonByName<AtkUnitBase>("ContextMenu");
+            var list = addon->GetComponentListById(24);
+            if ((contextMenu == null || !contextMenu->IsVisible)
+                && list != null && list->HeldItemIndex < 0)
+                Sort(addon, agent, mode);
         }
 
         visibleAddon = (nint)addon;
@@ -146,7 +163,8 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
                     pending = new SortRequest(visibleAddon, visiblePage, button.Mode);
                 ImGui.EndDisabled();
                 if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                    ImGui.SetTooltip(disabled ? "Sorting is unavailable; see the Dalamud log." : button.Tooltip);
+                    ImGui.SetTooltip(disabled ? "Sorting is unavailable; see the Dalamud log."
+                        : button.Tooltip + (activeMode == button.Mode ? "\nActive; reapplied after roster refreshes." : ""));
             }
             ImGui.End();
             ImGui.PopStyleVar(2);
@@ -160,10 +178,10 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         var stage = AtkStage.Instance();
         var list = addon->GetComponentListById(24);
         if (proxy == null || company == null || stage == null || list == null
-            || proxy->CharData == null || proxy->EntryCount > 200
+            || proxy->CharData == null || proxy->EntryCount == 0 || proxy->EntryCount > 200
             || proxy->EntryCount != list->ListLength)
         {
-            log.Warning("FC Tweaks sorting cancelled: the roster page is not fully loaded.");
+            WaitForRoster("the roster page is not fully loaded");
             return;
         }
 
@@ -182,6 +200,13 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
             return;
         }
 
+        // Let the addon consume pending native data before moving rows again.
+        if (numbers->UpdateState != 0 || strings->UpdateState != 0)
+        {
+            WaitForRoster("the native roster update is still pending");
+            return;
+        }
+
         var members = new List<RosterMember>((int)proxy->EntryCount);
         var ids = new HashSet<ulong>();
         for (var i = 0; i < proxy->EntryCount; i++)
@@ -189,14 +214,14 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
             var entry = proxy->CharData[i];
             if (entry.ContentId == 0 || !ids.Add(entry.ContentId))
             {
-                log.Warning("FC Tweaks sorting cancelled: the roster contains incomplete or duplicate member data.");
+                WaitForRoster("the roster contains incomplete or duplicate member data");
                 return;
             }
 
             var locationPointer = strings->StringArray[i * 5 + 1].Value;
             if (locationPointer == null)
             {
-                log.Warning("FC Tweaks sorting cancelled: a member's location text is not loaded.");
+                WaitForRoster("a member's location text is not loaded");
                 return;
             }
 
@@ -208,7 +233,7 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
                 var rank = getRank(company, rankId);
                 if (rank == null || rank->Name[0] == 0 || rank->RankNumber >= 16)
                 {
-                    log.Warning("FC Tweaks sorting cancelled: a member's FC rank hierarchy is not loaded.");
+                    WaitForRoster("a member's FC rank hierarchy is not loaded");
                     return;
                 }
                 rankOrder = rank->RankNumber;
@@ -219,10 +244,15 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
         }
 
         var order = RosterSort.CreateOrder(members, mode);
+        lastWaitReason = null;
+        var swaps = RosterSort.GetSwaps(order).ToArray();
+        if (swaps.Length == 0)
+            return;
+
         // Match native sorting: move the entire entry, then swap its UI data (including FC memo indexes).
         var swap = (delegate* unmanaged<InfoProxyFreeCompanyMember*, NumberArrayData*, StringArrayData*, int, int, byte>)swapAddress;
         var selected = list->SelectedItemIndex;
-        foreach (var (first, second) in RosterSort.GetSwaps(order))
+        foreach (var (first, second) in swaps)
         {
             var temporary = proxy->CharData[first];
             proxy->CharData[first] = proxy->CharData[second];
@@ -241,9 +271,18 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
     private void Clear()
     {
         pending = null;
+        nextSortCheck = 0;
+        lastWaitReason = null;
         visibleAddon = 0;
         foreach (var button in buttons)
             button.Visible = false;
+    }
+
+    private void WaitForRoster(string reason)
+    {
+        if (lastWaitReason != reason)
+            log.Debug("FC Tweaks sorting deferred: {Reason}. It will retry when the roster is ready.", reason);
+        lastWaitReason = reason;
     }
 
     private void Disable(string reason)

@@ -37,6 +37,21 @@ if (!members[2].IsOnline || new RosterMember(7, 1UL << 17, "AFK without online f
     throw new InvalidOperationException("Online classification must use Online | AnotherWorld, not displayed location or unrelated flags.");
 tests++;
 
+foreach (var mode in Enum.GetValues<RosterSortMode>())
+{
+    for (var refresh = 0; refresh < 5; refresh++)
+    {
+        var reloaded = members.ToArray();
+        var order = RosterSort.CreateOrder(reloaded, mode);
+        foreach (var (first, second) in RosterSort.GetSwaps(order))
+            (reloaded[first], reloaded[second]) = (reloaded[second], reloaded[first]);
+        Equal(RosterSort.CreateOrder(members, mode).Select(i => members[i]), reloaded,
+            $"{mode}: native refresh restores the selected ordering");
+        Equal(Array.Empty<(int, int)>(), RosterSort.GetSwaps(RosterSort.CreateOrder(reloaded, mode)),
+            $"{mode}: repeated checks make no native swaps when already sorted");
+    }
+}
+
 var random = new Random(41);
 for (var sample = 0; sample < 100; sample++)
 {
