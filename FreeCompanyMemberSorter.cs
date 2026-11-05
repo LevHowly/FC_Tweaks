@@ -1,0 +1,265 @@
+using System.Numerics;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Client.UI.Info;
+using FFXIVClientStructs.FFXIV.Component.GUI;
+using Lumina.Excel.Sheets;
+
+namespace FC_Tweaks;
+
+internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
+{
+    private const string AddonName = "FreeCompanyMember";
+    private const string SwapSignature =
+        "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 41 54 41 55 41 56 41 57 48 83 EC 30 48 8B 42 28 4C 8B EA";
+    private const string RankSignature =
+        "80 FA 10 73 12 0F B6 C2 48 6B D0 58 48 8D 81 ?? ?? ?? ?? 48 03 C2 C3 33 C0 C3";
+
+    private readonly IGameGui gameGui;
+    private readonly ICondition condition;
+    private readonly IAddonLifecycle lifecycle;
+    private readonly IPluginLog log;
+    private readonly nint swapAddress;
+    private readonly delegate* unmanaged<InfoProxyFreeCompany*, byte, InfoProxyFreeCompany.RankData*> getRank;
+    private readonly string gobletName;
+    private readonly HeaderButton[] buttons =
+    [
+        new(12, RosterSortMode.Name, "Name: A to Z (online members only)"),
+        new(14, RosterSortMode.Location, "Location: The Goblet first, then A to Z (online members only)"),
+        new(15, RosterSortMode.Rank, "Rank: highest to lowest (online members only)"),
+    ];
+    private SortRequest? pending;
+    private nint visibleAddon;
+    private byte visiblePage;
+    private bool disabled;
+
+    public FreeCompanyMemberSorter(IGameGui gameGui, ICondition condition, IAddonLifecycle lifecycle,
+        IPluginLog log, ISigScanner scanner, IDataManager dataManager)
+    {
+        this.gameGui = gameGui;
+        this.condition = condition;
+        this.lifecycle = lifecycle;
+        this.log = log;
+        if (!scanner.TryScanText(SwapSignature, out swapAddress)
+            || !scanner.TryScanText(RankSignature, out var rankAddress))
+        {
+            Disable("The native FC sorting functions could not be verified for this game version.");
+        }
+        else
+        {
+            // The SDK's Ranks field has an outdated offset; use the game's checked accessor.
+            getRank = (delegate* unmanaged<InfoProxyFreeCompany*, byte, InfoProxyFreeCompany.RankData*>)rankAddress;
+        }
+
+        gobletName = dataManager.GetExcelSheet<TerritoryType>().GetRow(341).PlaceName.Value.Name.ToString();
+        if (string.IsNullOrWhiteSpace(gobletName))
+            Disable("The localized name of The Goblet could not be loaded.");
+
+        lifecycle.RegisterListener(AddonEvent.PreClose, AddonName, OnClosing);
+        lifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnClosing);
+    }
+
+    public void Dispose()
+    {
+        lifecycle.UnregisterListener(AddonEvent.PreClose, AddonName, OnClosing);
+        lifecycle.UnregisterListener(AddonEvent.PreFinalize, AddonName, OnClosing);
+        Clear();
+    }
+
+    public void Update()
+    {
+        if (condition[ConditionFlag.BetweenAreas] || condition[ConditionFlag.BetweenAreas51]
+            || condition[ConditionFlag.LoggingOut])
+        {
+            Clear();
+            return;
+        }
+
+        var addon = gameGui.GetAddonByName<AtkUnitBase>(AddonName);
+        var agent = AgentFreeCompany.Instance();
+        if (addon == null || !addon->IsReady || !addon->IsVisible || agent == null)
+        {
+            Clear();
+            return;
+        }
+
+        var request = pending;
+        pending = null;
+        if (request is { } queued)
+        {
+            if (queued.Addon == (nint)addon && queued.Page == agent->CurrentMemberPageIndex)
+            {
+                var contextMenu = gameGui.GetAddonByName<AtkUnitBase>("ContextMenu");
+                if (contextMenu != null && contextMenu->IsVisible)
+                    log.Warning("FC Tweaks sorting cancelled because a member context menu is open.");
+                else if (!disabled)
+                    Sort(addon, agent, queued.Mode);
+            }
+            else
+            {
+                log.Warning("FC Tweaks sorting cancelled because the roster window or page changed.");
+            }
+        }
+
+        visibleAddon = (nint)addon;
+        visiblePage = agent->CurrentMemberPageIndex;
+        var scale = addon->GetScale();
+        foreach (var button in buttons)
+        {
+            var node = addon->GetTextNodeById(button.NodeId);
+            button.Visible = node != null && node->IsVisible();
+            if (!button.Visible)
+                continue;
+
+            ushort width = 0;
+            ushort height = 0;
+            node->GetTextDrawSize(&width, &height);
+            button.Position = new Vector2(node->ScreenX + (width + 4) * scale, node->ScreenY);
+        }
+    }
+
+    public void Draw()
+    {
+        if (visibleAddon == 0)
+            return;
+
+        foreach (var button in buttons)
+        {
+            if (!button.Visible)
+                continue;
+
+            ImGui.SetNextWindowPos(button.Position);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3, 1));
+            var flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground
+                        | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoFocusOnAppearing
+                        | ImGuiWindowFlags.NoNav | ImGuiWindowFlags.AlwaysAutoResize;
+            if (ImGui.Begin($"FC Sort {button.Mode}", flags))
+            {
+                ImGui.BeginDisabled(disabled);
+                if (ImGui.SmallButton($"Sort##FC{button.Mode}"))
+                    pending = new SortRequest(visibleAddon, visiblePage, button.Mode);
+                ImGui.EndDisabled();
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    ImGui.SetTooltip(disabled ? "Sorting is unavailable; see the Dalamud log." : button.Tooltip);
+            }
+            ImGui.End();
+            ImGui.PopStyleVar(2);
+        }
+    }
+
+    private void Sort(AtkUnitBase* addon, AgentFreeCompany* agent, RosterSortMode mode)
+    {
+        var proxy = agent->InfoProxyFreeCompanyMember;
+        var company = agent->InfoProxyFreeCompany;
+        var stage = AtkStage.Instance();
+        var list = addon->GetComponentListById(24);
+        if (proxy == null || company == null || stage == null || list == null
+            || proxy->CharData == null || proxy->EntryCount > 200
+            || proxy->EntryCount != list->ListLength)
+        {
+            log.Warning("FC Tweaks sorting cancelled: the roster page is not fully loaded.");
+            return;
+        }
+
+        if ((*(nint**)proxy)[30] != swapAddress)
+        {
+            Disable("The FC member row-swap handler does not match the verified native function.");
+            return;
+        }
+
+        var numbers = stage->GetNumberArrayData(NumberArrayType.FreeCompanyMember);
+        var strings = stage->GetStringArrayData(StringArrayType.FreeCompanyMember);
+        if (numbers == null || strings == null || numbers->IntArray == null || strings->StringArray == null
+            || numbers->Size != 2806 || strings->Size != 1401)
+        {
+            Disable("The FC member UI arrays have an unsupported layout.");
+            return;
+        }
+
+        var members = new List<RosterMember>((int)proxy->EntryCount);
+        var ids = new HashSet<ulong>();
+        for (var i = 0; i < proxy->EntryCount; i++)
+        {
+            var entry = proxy->CharData[i];
+            if (entry.ContentId == 0 || !ids.Add(entry.ContentId))
+            {
+                log.Warning("FC Tweaks sorting cancelled: the roster contains incomplete or duplicate member data.");
+                return;
+            }
+
+            var locationPointer = strings->StringArray[i * 5 + 1].Value;
+            if (locationPointer == null)
+            {
+                log.Warning("FC Tweaks sorting cancelled: a member's location text is not loaded.");
+                return;
+            }
+
+            var location = SeString.Parse(locationPointer).TextValue;
+            var rankOrder = 0;
+            if (mode == RosterSortMode.Rank && ((ulong)entry.State & 0x810000000000UL) != 0)
+            {
+                var rankId = (byte)((entry.ExtraFlags >> 12) & 0xFF);
+                var rank = getRank(company, rankId);
+                if (rank == null || rank->RankNumber >= 16)
+                {
+                    log.Warning("FC Tweaks sorting cancelled: a member's FC rank hierarchy is not loaded.");
+                    return;
+                }
+                rankOrder = rank->RankNumber;
+            }
+
+            members.Add(new RosterMember(entry.ContentId, (ulong)entry.State, entry.NameString, location,
+                string.Equals(location, gobletName, StringComparison.CurrentCultureIgnoreCase), rankOrder));
+        }
+
+        var order = RosterSort.CreateOrder(members, mode);
+        // Match native sorting: move the entire entry, then swap its UI data (including FC memo indexes).
+        var swap = (delegate* unmanaged<InfoProxyFreeCompanyMember*, NumberArrayData*, StringArrayData*, int, int, byte>)swapAddress;
+        var selected = list->SelectedItemIndex;
+        foreach (var (first, second) in RosterSort.GetSwaps(order))
+        {
+            var temporary = proxy->CharData[first];
+            proxy->CharData[first] = proxy->CharData[second];
+            proxy->CharData[second] = temporary;
+            swap(proxy, numbers, strings, first, second);
+        }
+
+        if (selected >= 0 && selected < order.Length)
+            list->SelectItem(Array.IndexOf(order, selected));
+        numbers->UpdateState = 1;
+        strings->UpdateState = 1;
+    }
+
+    private void OnClosing(AddonEvent type, AddonArgs args) => Clear();
+
+    private void Clear()
+    {
+        pending = null;
+        visibleAddon = 0;
+        foreach (var button in buttons)
+            button.Visible = false;
+    }
+
+    private void Disable(string reason)
+    {
+        disabled = true;
+        log.Error($"FC Tweaks member sorting disabled: {reason}");
+    }
+
+    private readonly record struct SortRequest(nint Addon, byte Page, RosterSortMode Mode);
+
+    private sealed class HeaderButton(uint nodeId, RosterSortMode mode, string tooltip)
+    {
+        public uint NodeId { get; } = nodeId;
+        public RosterSortMode Mode { get; } = mode;
+        public string Tooltip { get; } = tooltip;
+        public bool Visible { get; set; }
+        public Vector2 Position { get; set; }
+    }
+}

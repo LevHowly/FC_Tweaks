@@ -35,6 +35,31 @@ restores live windows unless an area transition or logout is in progress.
 
 The toggle appears in the upper-right of the member window.
 
+## Online member sorting
+
+Three small **Sort** buttons sit immediately to the right of the native **Name**,
+**Location**, and **Rank** column labels. Click one to sort online members on the
+**current loaded page** (up to 200 members):
+
+- **Name:** alphabetical, ignoring case.
+- **Location:** The Goblet first, then alphabetical by the location text displayed
+  by the game. The Goblet is identified using its localized game-data name.
+- **Rank:** numerical FC hierarchy order, highest first, not alphabetical rank names.
+
+Offline rows remain in their exact slots and retain their relative order.
+Online members visiting other worlds are included, even when their location shows
+a world name or elapsed-time text. Equal sort keys retain their previous order.
+Sorting is applied when clicked, not continuously; changing pages or a native roster
+refresh can restore the game's ordering. Click again to reapply it.
+
+Sorting runs on the framework update, never in the rendering callback. It uses
+the native FC row-swap handler to keep names, status, rank, memo indexes, and
+right-click member identity together. Pending sorts are discarded on close,
+destruction, zoning, or logout. An open context menu cancels sorting. Unsupported
+native functions or array layouts disable sorting and report an error in the
+Dalamud log; expansion remains independent. Native interaction and layout still
+require in-game testing.
+
 The native frame has its own layout node: changing the list or addon dimensions
 alone does not stretch it. FC Tweaks sets the frame height before updating the
 addon dimensions, then refreshes its draw/collision layout. Expansion and
@@ -56,6 +81,12 @@ Build with the Dalamud SDK installed by XIVLauncher:
 
 ```sh
 dotnet build
+```
+
+The dependency-free ordering tests can be run with:
+
+```sh
+dotnet run --project tests/FC_Tweaks.SortTests.csproj
 ```
 
 ## Package a release

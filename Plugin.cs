@@ -10,13 +10,16 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly IFramework framework;
     private readonly FreeCompanyWindowResizer resizer;
+    private readonly FreeCompanyMemberSorter sorter;
 
     public Plugin(IDalamudPluginInterface pluginInterface, IGameGui gameGui, IFramework framework,
-        IAddonLifecycle addonLifecycle, IPluginLog log, ICondition condition)
+        IAddonLifecycle addonLifecycle, IPluginLog log, ICondition condition, ISigScanner scanner,
+        IDataManager dataManager)
     {
         this.pluginInterface = pluginInterface;
         this.framework = framework;
         resizer = new FreeCompanyWindowResizer(gameGui, addonLifecycle, log, condition);
+        sorter = new FreeCompanyMemberSorter(gameGui, condition, addonLifecycle, log, scanner, dataManager);
 
         framework.Update += OnFrameworkUpdate;
         pluginInterface.UiBuilder.Draw += Draw;
@@ -28,13 +31,19 @@ public sealed class Plugin : IDalamudPlugin
     {
         pluginInterface.UiBuilder.Draw -= Draw;
         framework.Update -= OnFrameworkUpdate;
+        sorter.Dispose();
         resizer.Dispose();
     }
 
-    private void OnFrameworkUpdate(IFramework frameworkContext) => resizer.Update();
+    private void OnFrameworkUpdate(IFramework frameworkContext)
+    {
+        resizer.Update();
+        sorter.Update();
+    }
 
     private void Draw()
     {
+        sorter.Draw();
         if (!resizer.IsFreeCompanyVisible || !resizer.CanExpand)
             return;
 
