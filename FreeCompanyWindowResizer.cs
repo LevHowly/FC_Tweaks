@@ -34,6 +34,10 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             new DecorationSpec(45, NodeType.Res, IsRotatedDivider: false),
             new DecorationSpec(49, NodeType.Res, IsRotatedDivider: false),
         ])),
+        new(RankListNodeId, new FrameSpec(RankAddon, HasFrame: false,
+        [
+            new DecorationSpec(RankFooterNodeId, NodeType.Res, IsRotatedDivider: false),
+        ])),
         new(TopicsOnlineListNodeId, new FrameSpec(TopicsAddon, HasFrame: false, [])),
         new(ActivityListNodeId, new FrameSpec(ActivityAddon, HasFrame: false, [])),
     ];

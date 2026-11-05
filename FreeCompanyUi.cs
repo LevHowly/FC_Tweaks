@@ -16,6 +16,9 @@ internal static unsafe class FreeCompanyUi
     /// <summary>The Topics tab (freecompanytopics.uld).</summary>
     public const string TopicsAddon = "FreeCompanyTopics";
 
+    /// <summary>The Rank tab (freecompanyrank.uld).</summary>
+    public const string RankAddon = "FreeCompanyRank";
+
     /// <summary>The Activity tab (freecompanyactivity.uld).</summary>
     public const string ActivityAddon = "FreeCompanyActivity";
 
@@ -23,6 +26,9 @@ internal static unsafe class FreeCompanyUi
     /// <summary>"Members Online and on Home World", the bottom section of Topics.</summary>
     public const uint TopicsOnlineListNodeId = 27;
     public const uint ActivityListNodeId = 10;
+    public const uint RankListNodeId = 15;
+    /// <summary>Rank footer group: separator, Add Rank, Change Hierarchy and the rank count.</summary>
+    public const uint RankFooterNodeId = 16;
     public const uint CommunityFinderButtonNodeId = 2;
     public const uint NameHeaderNodeId = 12;
     public const uint LocationHeaderNodeId = 14;

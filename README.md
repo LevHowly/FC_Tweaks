@@ -10,7 +10,7 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.11**.
+Current release: **0.1.12**.
 
 ## Expand / Collapse
 
@@ -21,6 +21,7 @@ restored when it unloads).
 - **Expand** makes the whole FC window 252 units taller on every tab (the
   Members list's own height, so it doubles). These lists get the extra space:
   - **Members**: the member list; its page selector/footer moves down.
+  - **Rank**: the rank list; its buttons and rank count move down.
   - **Topics**: the "Members Online and on Home World" list at the bottom.
   - **Activity**: the activity notices list.
   Widths never change. The left divider stretches with the window.
@@ -29,7 +30,7 @@ restored when it unloads).
 - `/fctweaks` toggles the same setting (even with the window closed).
   `/fctweaks status` prints what the plugin sees, which helps with bug reports.
 
-Rank, Actions and Info keep their original layout inside the taller frame.
+Actions and Info keep their original layout inside the taller frame.
 
 How it works, briefly:
 
@@ -47,7 +48,7 @@ How it works, briefly:
 
 Verified native layout nodes: FreeCompany node 2 (Community Finder) and node 19
 (the rotated left divider); FreeCompanyMember node 24 (member list) and groups
-45 and 49 (page selectors and footer separator); FreeCompanyTopics node 27
+45 and 49 (page selectors and footer separator); FreeCompanyRank node 15 (rank list) and group 16 (footer); FreeCompanyTopics node 27
 (members online); FreeCompanyActivity node 10 (notices).
 
 ## Online member sorting
@@ -77,6 +78,7 @@ error; Expand / Collapse keeps working.
 
 ## Changelog
 
+- **0.1.12** Also enlarge the Rank list and move its footer down.
 - **0.1.11** Also enlarge the Topics "Members Online" list and the Activity list.
   The window always grows by exactly 252 units.
 - **0.1.10** Move the page selector/footer down with the list (the list's growth
