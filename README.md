@@ -1,5 +1,17 @@
 # FC Tweaks
 
+**Dalamud custom repository URL:**
+
+```text
+https://raw.githubusercontent.com/LevHowly/FC_Tweaks/master/pluginmaster.json
+```
+
+In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
+add this URL, save, then install **FC Tweaks** from the plugin installer.
+No manual download or developer plugin configuration is needed.
+
+Current release: **0.1.0**.
+
 FC Tweaks adds an **Expand** toggle to the Free Company member window. It
 doubles the member list's visible row count (up to the number of members).
 The member window and the vanilla Free Company background frame grow by the
@@ -31,3 +43,14 @@ Build with the Dalamud SDK installed by XIVLauncher:
 ```sh
 dotnet build
 ```
+
+## Package a release
+
+```sh
+bash scripts/package-release.sh
+```
+
+This builds Release, creates `build/release/latest.zip`, and updates
+`pluginmaster.json` from the generated plugin manifest. Commit the updated
+version and feed, push them, and upload the ZIP to the matching GitHub release
+(for example, `v0.1.0`). Keep the ZIP filename `latest.zip`: the feed links to it.

@@ -1,6 +1,7 @@
 {
   "Name": "FC Tweaks",
   "Author": "LevHowly",
+  "RepoUrl": "https://github.com/LevHowly/FC_Tweaks",
   "Description": "Expand the Free Company member list to show more members at once.",
   "Punchline": "See more of your FC roster without scrolling."
 }
