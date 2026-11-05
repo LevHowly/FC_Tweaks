@@ -55,7 +55,7 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        if (ImGui.Button(resizer.IsExpanded ? "1x height##FC" : "2x height##FC"))
+        if (ImGui.Button(resizer.IsExpanded ? "Collapse##FC" : "Expand##FC"))
             resizer.ToggleExpansion();
 
         ImGui.End();

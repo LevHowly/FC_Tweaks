@@ -1,9 +1,9 @@
 # FC Tweaks
 
-FC Tweaks adds a **2x height** toggle to the Free Company member window. It
+FC Tweaks adds an **Expand** toggle to the Free Company member window. It
 doubles the member list's visible row count (up to the number of members).
 The member window and the vanilla Free Company background frame grow by the
-same added list height, leaving all widths unchanged. Click **1x height** to
+same added list height, leaving all widths unchanged. Click **Collapse** to
 restore the original size. The original dimensions are also restored before
 either window closes or is destroyed, and when the plugin is unloaded.
 
