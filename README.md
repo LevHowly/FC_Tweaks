@@ -14,6 +14,12 @@ alone does not stretch it. FC Tweaks sets the frame height before updating the
 addon dimensions, then refreshes its draw/collision layout. Expansion and
 restoration use the same resize order. Visual layout still needs in-game validation.
 
+The left divider stretches by the same height delta, and the bottom pagination
+controls and horizontal separator move down with the roster. Their original
+heights and positions are restored on collapse. These decorations are identified
+from their original layout geometry, excluding the roster and frame internals;
+missing matches are reported in the Dalamud log.
+
 ## Build
 
 Build with the Dalamud SDK installed by XIVLauncher:

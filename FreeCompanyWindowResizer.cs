@@ -204,7 +204,85 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         ushort height = 0;
         window->GetSize(&width, &height, false);
         return new WindowLayout(name, (nint)window, width, height,
-            window->WindowNode == null ? null : window->WindowNode->Height);
+            window->WindowNode == null ? null : window->WindowNode->Height,
+            CaptureContentNodes(window, name));
+    }
+
+    private List<ContentNodeLayout> CaptureContentNodes(AtkUnitBase* window, string name)
+    {
+        var result = new List<ContentNodeLayout>();
+        var listNode = memberList->OwnerNode;
+        if (listNode == null)
+        {
+            log.Warning("FC Tweaks cannot locate the roster owner node to align the divider and footer.");
+            return result;
+        }
+
+        var listBottom = addon->Y
+                         + (GetLocalY((AtkResNode*)listNode) + memberList->ListHeight) * addon->GetScale();
+        var footerTop = (listBottom - window->Y) / window->GetScale() - 12;
+
+        // The addon node list excludes component internals, so moving a footer
+        // component also moves its text, buttons and collision nodes together.
+        for (var i = 0; i < window->UldManager.NodeListCount; i++)
+        {
+            var node = window->UldManager.NodeList[i];
+            if (node == null || node == window->RootNode
+                || IsWithin(node, (AtkResNode*)listNode)
+                || IsWithin(node, (AtkResNode*)window->WindowNode))
+                continue;
+
+            var y = GetLocalY(node);
+            var isDivider = name == ParentAddonName
+                            && (node->Type == NodeType.Image || node->Type == NodeType.NineGrid)
+                            && node->Width <= 8 && node->Height >= memberList->ListHeight / 2;
+            var isFooter = y >= footerTop && y < window->GetScaledHeight(false);
+            if (isDivider || isFooter)
+                result.Add(new ContentNodeLayout((nint)node, node->NodeId, node->Y, node->Height, isDivider));
+        }
+
+        var selected = result.Select(node => node.Address).ToHashSet();
+        result.RemoveAll(node =>
+        {
+            var parent = ((AtkResNode*)node.Address)->ParentNode;
+            for (var depth = 0; parent != null && depth < 64; depth++, parent = parent->ParentNode)
+            {
+                if (selected.Contains((nint)parent))
+                    return true;
+            }
+
+            return false;
+        });
+        log.Debug("FC Tweaks captured {Count} divider/footer nodes for {Addon}.", result.Count, name);
+        if (result.Count == 0)
+            log.Warning("FC Tweaks found no divider/footer layout nodes for {Addon}; these decorations will not follow expansion.", name);
+        return result;
+    }
+
+    private static float GetLocalY(AtkResNode* node)
+    {
+        var y = node->Y;
+        for (var depth = 0; node->ParentNode != null && depth < 64; depth++)
+        {
+            node = node->ParentNode;
+            y = y * node->ScaleY + node->Y;
+        }
+
+        return y;
+    }
+
+    private static bool IsWithin(AtkResNode* node, AtkResNode* ancestor)
+    {
+        if (ancestor == null)
+            return false;
+
+        for (var depth = 0; node != null && depth < 64; depth++, node = node->ParentNode)
+        {
+            if (node == ancestor)
+                return true;
+        }
+
+        return false;
     }
 
     private void ApplyWindowHeight(WindowLayout? layout, int extraHeight)
@@ -232,6 +310,40 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             }
         }
 
+        foreach (var content in layout.ContentNodes)
+        {
+            AtkResNode* node = null;
+            for (var i = 0; i < window->UldManager.NodeListCount; i++)
+            {
+                var candidate = window->UldManager.NodeList[i];
+                if (candidate != null && (nint)candidate == content.Address && candidate->NodeId == content.NodeId)
+                {
+                    node = candidate;
+                    break;
+                }
+            }
+
+            if (node == null)
+                continue;
+
+            if (content.Stretch)
+            {
+                var target = ToUShort(content.Height + extraHeight);
+                if (node->Height == target)
+                    continue;
+                node->SetHeight(target);
+            }
+            else
+            {
+                var target = content.Y + extraHeight;
+                if (node->Y == target)
+                    continue;
+                node->SetYFloat(target);
+            }
+
+            changed = true;
+        }
+
         if (changed)
         {
             window->SetSize(layout.Width, height);
@@ -243,7 +355,10 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 
     private static ushort ToUShort(int value) => (ushort)Math.Clamp(value, 1, ushort.MaxValue);
 
-    private sealed record WindowLayout(string Name, nint Address, ushort Width, ushort Height, ushort? FrameHeight);
+    private sealed record ContentNodeLayout(nint Address, uint NodeId, float Y, ushort Height, bool Stretch);
+
+    private sealed record WindowLayout(string Name, nint Address, ushort Width, ushort Height,
+        ushort? FrameHeight, List<ContentNodeLayout> ContentNodes);
 
     private sealed record Layout(
         short ListWidth,
