@@ -10,7 +10,11 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.2**.
+Current release: **0.1.3**.
+
+Version 0.1.3 adds online-only sorting buttons beside Name, Location, and Rank.
+Sorting is limited to the currently loaded roster page and leaves offline rows
+untouched. See [Online member sorting](#online-member-sorting) below.
 
 Version 0.1.2 suspends UI writes during area transitions and logout. Close
 callbacks queue restoration instead of resizing rows during teardown; finalization
