@@ -16,9 +16,13 @@ restoration use the same resize order. Visual layout still needs in-game validat
 
 The left divider stretches by the same height delta, and the bottom pagination
 controls and horizontal separator move down with the roster. Their original
-heights and positions are restored on collapse. These decorations are identified
-from their original layout geometry, excluding the roster and frame internals;
-missing matches are reported in the Dalamud log.
+dimensions and positions are restored on collapse. The plugin targets the
+verified native layout nodes: FreeCompany node 19 (a rotated divider strip),
+and FreeCompanyMember groups 45 and 49 (page selectors and the footer, including
+its horizontal separator). The divider's local width and bottom position grow
+together so its top stays fixed. Adjustments are reapplied before native drawing
+to prevent UI animations from resetting them. Missing or incompatible nodes are
+reported in the Dalamud log.
 
 ## Build
 
