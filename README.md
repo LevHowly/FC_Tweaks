@@ -10,7 +10,12 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.6**.
+Current release: **0.1.7**.
+
+Version 0.1.7 fixes the missing Expand/Collapse overlay: displaying the control
+does not require the parent addon's optional WindowNode pointer. Its position is
+calculated from the parent window's live position/scale and Community Finder's
+local coordinates, rather than a hidden node's stale screen transform.
 
 Version 0.1.6 makes expansion a saved, global FC-window preference. Switching
 tabs or closing the window no longer collapses it or resets the button. The

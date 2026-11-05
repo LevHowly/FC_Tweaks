@@ -65,8 +65,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             if (IsTransitioning)
                 return false;
             var parent = gameGui.GetAddonByName<AtkUnitBase>(ParentAddonName);
-            return parent != null && parent->IsVisible && parent->RootNode != null
-                && parent->WindowNode != null;
+            return parent != null && parent->IsVisible && parent->RootNode != null;
         }
     }
 
@@ -298,7 +297,13 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             replacedButton = (nint)button;
             buttonWasVisible = button->IsVisible();
         }
-        buttonPosition = (button->ScreenX, button->ScreenY);
+        // Hidden nodes do not reliably refresh their screen transform. Node 2 is
+        // a direct child of the FC root, so anchor to the live addon instead.
+        short x = 0;
+        short y = 0;
+        parent->GetPosition(&x, &y);
+        var scale = parent->GetScale();
+        buttonPosition = (x + button->X * scale, y + button->Y * scale);
         button->ToggleVisibility(false);
     }
 
