@@ -10,7 +10,12 @@ In Dalamud, open **Settings > Experimental > Custom Plugin Repositories**,
 add this URL, save, then install **FC Tweaks** from the plugin installer.
 No manual download or developer plugin configuration is needed.
 
-Current release: **0.1.0**.
+Current release: **0.1.1**.
+
+Version 0.1.1 fixes a native crash when expanding from the ImGui button.
+The button now queues the resize for the framework update instead of allocating
+native list rows during rendering. Addon readiness and component identity are
+checked before resizing; decoration updates never allocate list rows.
 
 FC Tweaks adds an **Expand** toggle to the Free Company member window. It
 doubles the member list's visible row count (up to the number of members).
@@ -32,7 +37,7 @@ dimensions and positions are restored on collapse. The plugin targets the
 verified native layout nodes: FreeCompany node 19 (a rotated divider strip),
 and FreeCompanyMember groups 45 and 49 (page selectors and the footer, including
 its horizontal separator). The divider's local width and bottom position grow
-together so its top stays fixed. Adjustments are reapplied before native drawing
+together so its top stays fixed. Decorations are reapplied after native updates
 to prevent UI animations from resetting them. Missing or incompatible nodes are
 reported in the Dalamud log.
 

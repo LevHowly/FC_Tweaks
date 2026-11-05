@@ -22,6 +22,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
     private int framesUntilNextSearch;
     private WindowLayout? memberWindow;
     private WindowLayout? parentWindow;
+    private bool toggleRequested;
 
     public FreeCompanyWindowResizer(IGameGui gameGui, IAddonLifecycle addonLifecycle, IPluginLog log)
     {
@@ -32,7 +33,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         {
             addonLifecycle.RegisterListener(AddonEvent.PreClose, name, OnClosing);
             addonLifecycle.RegisterListener(AddonEvent.PreFinalize, name, OnClosing);
-            addonLifecycle.RegisterListener(AddonEvent.PreDraw, name, OnDrawing);
+            addonLifecycle.RegisterListener(AddonEvent.PostUpdate, name, OnUpdated);
         }
     }
 
@@ -53,11 +54,15 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             framesUntilNextSearch = 0;
         }
 
-        if (addon == null)
+        if (addon == null || !addon->IsReady)
+        {
+            toggleRequested = false;
             return;
+        }
 
         if (!addon->IsVisible)
         {
+            toggleRequested = false;
             if (isExpanded)
             {
                 RestoreLayout();
@@ -65,6 +70,18 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             }
 
             return;
+        }
+
+        if (memberList != null && addon->GetComponentListById(MemberListNodeId) != memberList)
+        {
+            log.Warning("FC Tweaks roster component changed; cancelling expansion and recapturing its layout.");
+            ApplyWindowHeight(memberWindow, 0);
+            ApplyWindowHeight(parentWindow, 0);
+            memberList = null;
+            originalLayout = null;
+            isExpanded = false;
+            toggleRequested = false;
+            framesUntilNextSearch = 0;
         }
 
         if (memberList == null && framesUntilNextSearch == 0)
@@ -77,20 +94,25 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             framesUntilNextSearch--;
         }
 
+        if (toggleRequested)
+        {
+            toggleRequested = false;
+            if (CanExpand)
+            {
+                isExpanded = !isExpanded;
+                if (!isExpanded)
+                    RestoreLayout();
+            }
+        }
+
         if (isExpanded)
             ApplyExpandedLayout();
     }
 
     public void ToggleExpansion()
     {
-        if (!CanExpand || addon == null || !addon->IsVisible)
-            return;
-
-        isExpanded = !isExpanded;
-        if (isExpanded)
-            ApplyExpandedLayout();
-        else
-            RestoreLayout();
+        // ImGui runs during Present: native list allocation must wait until Update.
+        toggleRequested = !toggleRequested;
     }
 
     public (float X, float Y) GetButtonPosition()
@@ -106,8 +128,10 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
 
     public void Restore()
     {
+        toggleRequested = false;
         if (addon != null && gameGui.GetAddonByName<AtkUnitBase>(AddonName) == addon
-            && memberList != null && originalLayout is not null)
+            && addon->IsReady && memberList != null && originalLayout is not null
+            && addon->GetComponentListById(MemberListNodeId) == memberList)
             RestoreLayout();
 
         ApplyWindowHeight(memberWindow, 0);
@@ -122,14 +146,25 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
         {
             addonLifecycle.UnregisterListener(AddonEvent.PreClose, name, OnClosing);
             addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, name, OnClosing);
-            addonLifecycle.UnregisterListener(AddonEvent.PreDraw, name, OnDrawing);
+            addonLifecycle.UnregisterListener(AddonEvent.PostUpdate, name, OnUpdated);
         }
     }
 
-    private void OnDrawing(AddonEvent type, AddonArgs args)
+    private void OnUpdated(AddonEvent type, AddonArgs args)
     {
-        if (isExpanded && IsFreeCompanyVisible)
-            ApplyExpandedLayout();
+        // Reapply animated decorations after native updates, without allocating list rows.
+        if (!isExpanded || originalLayout is not { } original
+            || addon == null || gameGui.GetAddonByName<AtkUnitBase>(AddonName) != addon
+            || !addon->IsReady || !addon->IsVisible
+            || addon->GetComponentListById(MemberListNodeId) != memberList)
+            return;
+
+        var extraHeight = memberList->ListHeight - original.ListHeight;
+        if (extraHeight >= 0)
+        {
+            ApplyWindowHeight(memberWindow, extraHeight);
+            ApplyWindowHeight(parentWindow, extraHeight);
+        }
     }
 
     private void OnClosing(AddonEvent type, AddonArgs args)
@@ -246,7 +281,7 @@ internal sealed unsafe class FreeCompanyWindowResizer : IDisposable
             return;
 
         var window = gameGui.GetAddonByName<AtkUnitBase>(layout.Name);
-        if (window == null || (nint)window != layout.Address)
+        if (window == null || (nint)window != layout.Address || !window->IsReady)
             return;
 
         var height = ToUShort(layout.Height + extraHeight);
