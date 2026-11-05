@@ -206,7 +206,7 @@ internal sealed unsafe class FreeCompanyMemberSorter : IDisposable
             {
                 var rankId = (byte)((entry.ExtraFlags >> 12) & 0xFF);
                 var rank = getRank(company, rankId);
-                if (rank == null || rank->RankNumber >= 16)
+                if (rank == null || rank->Name[0] == 0 || rank->RankNumber >= 16)
                 {
                     log.Warning("FC Tweaks sorting cancelled: a member's FC rank hierarchy is not loaded.");
                     return;
