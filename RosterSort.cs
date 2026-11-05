@@ -13,6 +13,23 @@ internal readonly record struct RosterMember(
     public bool IsOnline => (State & 0x810000000000UL) != 0;
 }
 
+internal sealed class RosterSortSession
+{
+    private long? lastUpdate;
+    public RosterSortMode? Mode { get; set; }
+
+    public void MarkUpdated(long now) => lastUpdate = now;
+
+    public bool CanSort(long now) => Mode is not null && lastUpdate is { } updated
+        && now - updated >= 1000;
+
+    public void Close()
+    {
+        Mode = null;
+        lastUpdate = null;
+    }
+}
+
 internal static class RosterSort
 {
     // Each destination receives this source index. Offline slots are never moved.
@@ -33,23 +50,6 @@ internal static class RosterSort
         foreach (var source in sorted)
             order[online[destination++]] = source;
         return order;
-    }
-
-    internal sealed class RosterSortSession
-    {
-        private long? lastUpdate;
-        public RosterSortMode? Mode { get; set; }
-
-        public void MarkUpdated(long now) => lastUpdate = now;
-
-        public bool CanSort(long now) => Mode is not null && lastUpdate is { } updated
-            && now - updated >= 1000;
-
-        public void Close()
-        {
-            Mode = null;
-            lastUpdate = null;
-        }
     }
 
     public static IEnumerable<(int First, int Second)> GetSwaps(IReadOnlyList<int> order)
